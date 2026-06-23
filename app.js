@@ -5,6 +5,11 @@ class AudioSynth {
   constructor() {
     this.ctx = null;
     this.muted = false;
+    this.buffers = {};
+    this.loaded = false;
+    this.activeSkin = 'green-apple';
+    this.lastCrunchTime = 0;
+    this.lastKneadTime = 0;
   }
 
   init() {
@@ -12,7 +17,38 @@ class AudioSynth {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (AudioContextClass) {
       this.ctx = new AudioContextClass();
+      this.loadAudioFiles();
     }
+  }
+
+  async loadAudioFiles() {
+    if (this.loaded) return;
+    const files = {
+      apple_crack_1: 'audio/apple_crack_1.mp3',
+      apple_crack_2: 'audio/apple_crack_2.mp3',
+      apple_knead_1: 'audio/apple_knead_1.mp3',
+      apple_knead_2: 'audio/apple_knead_2.mp3',
+      butter_crack_1: 'audio/butter_crack_1.mp3',
+      butter_crack_2: 'audio/butter_crack_2.mp3',
+      balloon_crack_1: 'audio/balloon_crack_1.mp3',
+      balloon_crack_2: 'audio/balloon_crack_2.mp3',
+      choco_crack_1: 'audio/choco_crack_1.mp3',
+      choco_crack_2: 'audio/choco_crack_2.mp3',
+      choco_knead_1: 'audio/choco_knead_1.mp3',
+      choco_knead_2: 'audio/choco_knead_2.mp3'
+    };
+
+    for (const [name, path] of Object.entries(files)) {
+      try {
+        const response = await fetch(path);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+        this.buffers[name] = audioBuffer;
+      } catch (err) {
+        console.error(`Failed to load audio file: ${path}`, err);
+      }
+    }
+    this.loaded = true;
   }
 
   resume() {
@@ -28,11 +64,9 @@ class AudioSynth {
     return this.muted;
   }
 
-  // 3D 입체 공간 오디오 설정을 위한 PannerNode 생성 및 리스너 배치
   createPanner(now, position) {
     if (!this.ctx) return null;
 
-    // 카메라 위치(0, 0, 8)에 가깝게 오디오 리스너 배치
     const listener = this.ctx.listener;
     if (listener) {
       if (listener.positionX) {
@@ -52,7 +86,7 @@ class AudioSynth {
     }
 
     const panner = this.ctx.createPanner();
-    panner.panningModel = 'HRTF'; // 입체 음향 HRTF 채택
+    panner.panningModel = 'HRTF';
     panner.distanceModel = 'inverse';
     panner.refDistance = 1.0;
     panner.maxDistance = 100.0;
@@ -70,212 +104,81 @@ class AudioSynth {
     return panner;
   }
 
-  // 1-1. 입기형 파쇄 클라우드 + 공진 필터 뱅크 기반 크런치 사운드
+  playBuffer(bufferName, position = null, loop = false, pitch = 1.0, volume = 1.0) {
+    if (this.muted || !this.ctx || !this.buffers[bufferName]) return null;
+    this.resume();
+
+    const now = this.ctx.currentTime;
+    const panner = this.createPanner(now, position);
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.buffers[bufferName];
+    source.loop = loop;
+    source.playbackRate.setValueAtTime(pitch, now);
+
+    const gainNode = this.ctx.createGain();
+    gainNode.gain.setValueAtTime(volume, now);
+
+    source.connect(gainNode);
+    if (panner) {
+      gainNode.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      gainNode.connect(this.ctx.destination);
+    }
+
+    source.start(now);
+    return { source, gainNode };
+  }
+
   playCrunch(type = 'apple', pitchMultiplier = 1.0, position = null) {
-    if (this.muted || !this.ctx) return;
-    this.resume();
+    const now = this.ctx ? this.ctx.currentTime : 0;
+    if (now - this.lastCrunchTime < 0.22) return; // 220ms throttle to prevent overlapping noise
+    this.lastCrunchTime = now;
 
-    const now = this.ctx.currentTime;
-    const panner = this.createPanner(now, position);
+    // Map skin names
+    let mappedType = type;
+    if (type === 'green-apple') mappedType = 'apple';
+    if (type === 'butter-stick') mappedType = 'butter';
+    if (type === 'mini-balloon') mappedType = 'balloon';
+    if (type === 'choco-banana') mappedType = 'choco';
 
-    // 각 타입별 맞춤형 물리음향 파라미터 세팅
-    let baseFreq = 400;
-    let decay = 0.08;
-    let gainVal = 0.8;
-    let crackleCount = 25; // 더 빽빽하고 선명한 꽈드득 소리를 위해 증가
-    let crackleDecay = 0.015;
-    let crackleGain = 0.4;
-    let crackleDelaySpread = 0.12; // 120ms 동안 분산
-    let resonators = [1, 2, 4]; // 고조파 공진 주파수 배수
-
-    if (type === 'apple') {
-      // 청사과: 파사삭 아삭하고 맑은 깨짐음 (고음부 중심 공진)
-      baseFreq = 380;
-      decay = 0.07;
-      gainVal = 0.85;
-      crackleCount = 28;
-      crackleDecay = 0.008;
-      crackleGain = 0.45;
-      crackleDelaySpread = 0.09;
-      resonators = [1, 2.2, 3.8, 5.5];
-    } else if (type === 'butter') {
-      // 3레이어 버터: 서석서석 밀리며 무겁게 깨지는 소리 (중저음 중심 공진)
-      baseFreq = 180;
-      decay = 0.15;
-      gainVal = 0.9;
-      crackleCount = 20;
-      crackleDecay = 0.025;
-      crackleGain = 0.3;
-      crackleDelaySpread = 0.18;
-      resonators = [1, 1.5, 2.1, 3.0];
-    } else if (type === 'balloon') {
-      // 크리스피 미니: 팽팽한 풍선막이 터지며 경쾌하게 깨지는 소리 (매우 날카로운 고음)
-      baseFreq = 550;
-      decay = 0.05;
-      gainVal = 0.7;
-      crackleCount = 22;
-      crackleDecay = 0.006;
-      crackleGain = 0.5;
-      crackleDelaySpread = 0.08;
-      resonators = [1, 2.5, 4.5, 6.0];
-    } else if (type === 'choco') {
-      // 초코 바나나: 두껍고 딱딱한 초콜릿이 툭! 부서지는 묵직한 소리 (저음 중심의 강한 타격감)
-      baseFreq = 120;
-      decay = 0.18;
-      gainVal = 1.1;
-      crackleCount = 24;
-      crackleDecay = 0.02;
-      crackleGain = 0.35;
-      crackleDelaySpread = 0.15;
-      resonators = [1, 1.8, 2.6, 3.5];
-    }
-
-    // -------------------------------------------------------------
-    // 레이어 A: 공진 필터 뱅크 (Resonator Filter Bank) - 묵직한 바디 타격음
-    // -------------------------------------------------------------
-    const noiseBufferSize = this.ctx.sampleRate * decay;
-    const noiseBuffer = this.ctx.createBuffer(1, noiseBufferSize, this.ctx.sampleRate);
-    const noiseData = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < noiseBufferSize; i++) {
-      const t = i / noiseBufferSize;
-      noiseData[i] = (Math.random() * 2 - 1) * (1.0 - t);
-    }
-    const noiseSource = this.ctx.createBufferSource();
-    noiseSource.buffer = noiseBuffer;
-
-    const filterGainNode = this.ctx.createGain();
-    filterGainNode.gain.setValueAtTime(gainVal, now);
-    filterGainNode.gain.exponentialRampToValueAtTime(0.001, now + decay);
-
-    resonators.forEach((ratio, idx) => {
-      const resonanceFreq = baseFreq * ratio * pitchMultiplier;
-      const bpFilter = this.ctx.createBiquadFilter();
-      bpFilter.type = 'bandpass';
-      bpFilter.frequency.setValueAtTime(resonanceFreq, now);
-      bpFilter.Q.setValueAtTime(idx === 0 ? 12 : 8, now); 
-
-      noiseSource.connect(bpFilter);
-      bpFilter.connect(filterGainNode);
-    });
-
-    if (panner) {
-      filterGainNode.connect(panner);
-      panner.connect(this.ctx.destination);
-    } else {
-      filterGainNode.connect(this.ctx.destination);
-    }
-    noiseSource.start(now);
-    noiseSource.stop(now + decay);
-
-    // -------------------------------------------------------------
-    // 레이어 B: 물리 모델링 파쇄 클라우드 (Micro Clicks & Sine Sweeps)
-    // -------------------------------------------------------------
-    for (let i = 0; i < crackleCount; i++) {
-      const delay = (i / crackleCount) * crackleDelaySpread + Math.random() * 0.015;
-      const crackTime = now + delay;
-
-      const osc = this.ctx.createOscillator();
-      osc.type = 'sine';
-
-      const startF = (baseFreq * (2.5 + Math.random() * 3.5)) * pitchMultiplier;
-      const endF = startF * 0.4;
-      osc.frequency.setValueAtTime(startF, crackTime);
-      osc.frequency.exponentialRampToValueAtTime(endF, crackTime + crackleDecay);
-
-      const clickGain = this.ctx.createGain();
-      clickGain.gain.setValueAtTime(crackleGain * (0.4 + Math.random() * 0.6), crackTime);
-      clickGain.gain.exponentialRampToValueAtTime(0.001, crackTime + crackleDecay);
-
-      const clickBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.002, this.ctx.sampleRate);
-      const clickBufData = clickBuffer.getChannelData(0);
-      for (let j = 0; j < clickBufData.length; j++) {
-        clickBufData[j] = Math.random() * 2 - 1;
-      }
-      const clickSource = this.ctx.createBufferSource();
-      clickSource.buffer = clickBuffer;
-
-      const clickFilter = this.ctx.createBiquadFilter();
-      clickFilter.type = 'highpass';
-      clickFilter.frequency.setValueAtTime(2500, crackTime);
-
-      osc.connect(clickGain);
-      clickSource.connect(clickFilter);
-      clickFilter.connect(clickGain);
-
-      if (panner) {
-        clickGain.connect(panner);
-      } else {
-        clickGain.connect(this.ctx.destination);
-      }
-
-      osc.start(crackTime);
-      osc.stop(crackTime + crackleDecay + 0.002);
-      clickSource.start(crackTime);
-      clickSource.stop(crackTime + 0.003);
-    }
+    const idx = Math.random() < 0.5 ? 1 : 2;
+    const name = `${mappedType}_crack_${idx}`;
+    const pitch = (0.95 + Math.random() * 0.1) * pitchMultiplier;
+    this.playBuffer(name, position, false, pitch, 0.95);
   }
 
-  // 1-2. 최종 파열 팝 사운드
   playPop(freq = 120, position = null) {
-    if (this.muted || !this.ctx) return;
-    this.resume();
+    let type = 'apple';
+    if (this.activeSkin === 'green-apple') type = 'apple';
+    else if (this.activeSkin === 'butter-stick') type = 'butter';
+    else if (this.activeSkin === 'mini-balloon') type = 'balloon';
+    else if (this.activeSkin === 'choco-banana') type = 'choco';
 
-    const now = this.ctx.currentTime;
-    const panner = this.createPanner(now, position);
-
-    const osc = this.ctx.createOscillator();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(freq, now);
-    osc.frequency.exponentialRampToValueAtTime(20, now + 0.3);
-
-    const lowpass = this.ctx.createBiquadFilter();
-    lowpass.type = 'lowpass';
-    lowpass.frequency.setValueAtTime(180, now);
-
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.9, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-
-    osc.connect(lowpass);
-    lowpass.connect(gain);
-    if (panner) {
-      gain.connect(panner);
-      panner.connect(this.ctx.destination);
-    } else {
-      gain.connect(this.ctx.destination);
-    }
-
-    const noiseBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.2, this.ctx.sampleRate);
-    const noiseData = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < noiseData.length; i++) {
-      noiseData[i] = Math.random() * 2 - 1;
-    }
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = noiseBuffer;
-
-    const noiseFilter = this.ctx.createBiquadFilter();
-    noiseFilter.type = 'lowpass';
-    noiseFilter.frequency.setValueAtTime(600, now); 
-
-    const noiseGain = this.ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.5, now);
-    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-
-    noise.connect(noiseFilter);
-    noiseFilter.connect(noiseGain);
-    if (panner) {
-      noiseGain.connect(panner);
-    } else {
-      noiseGain.connect(this.ctx.destination);
-    }
-
-    osc.start(now);
-    osc.stop(now + 0.31);
-    noise.start(now);
-    noise.stop(now + 0.21);
+    const name = `${type}_crack_2`; // Play the heavier second crack on explosion
+    this.playBuffer(name, position, false, 0.9, 1.25);
   }
 
-  // 1-3. 미니 왁볼 개별 파쇄음
+  playSquelch(intensity = 0.5, position = null) {
+    const now = this.ctx ? this.ctx.currentTime : 0;
+    const throttle = Math.max(0.14, 0.42 - intensity * 0.25); 
+    if (now - this.lastKneadTime < throttle) return;
+    this.lastKneadTime = now;
+
+    let type = 'apple';
+    if (this.activeSkin === 'green-apple') type = 'apple';
+    else if (this.activeSkin === 'butter-stick') type = 'choco'; // butter reuses choco
+    else if (this.activeSkin === 'mini-balloon') type = 'apple'; // balloon reuses apple
+    else if (this.activeSkin === 'choco-banana') type = 'choco';
+
+    const idx = Math.random() < 0.5 ? 1 : 2;
+    const name = `${type}_knead_${idx}`;
+    const volume = Math.min(1.0, 0.25 + intensity * 0.75);
+    const pitch = 0.88 + Math.random() * 0.24;
+    this.playBuffer(name, position, false, pitch, volume);
+  }
+
   playMiniPop(position = null) {
     if (this.muted || !this.ctx) return;
     this.resume();
@@ -304,7 +207,6 @@ class AudioSynth {
     osc.stop(now + 0.11);
   }
 
-  // 1-4. 미니 벌룬 비드간 충돌/마찰음
   playBeadTap(position = null) {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
@@ -330,102 +232,6 @@ class AudioSynth {
     osc.stop(now + 0.03);
   }
 
-  // 1-5. 극저역 서브베이스 + 입기형 기포 기차 기반 찰진 반죽 Squelch
-  playSquelch(intensity = 0.5, position = null) {
-    if (this.muted || !this.ctx) return;
-    
-    const now = this.ctx.currentTime;
-    const panner = this.createPanner(now, position);
-
-    // A) 극저역 서브베이스 레이어 (Sub-bass Weight Layer, 40-70Hz)
-    const oscDough = this.ctx.createOscillator();
-    oscDough.type = 'triangle';
-    oscDough.frequency.setValueAtTime(55 + intensity * 15, now);
-    oscDough.frequency.exponentialRampToValueAtTime(32, now + 0.15);
-
-    const doughFilter = this.ctx.createBiquadFilter();
-    doughFilter.type = 'lowpass';
-    doughFilter.frequency.setValueAtTime(75, now);
-
-    const doughGain = this.ctx.createGain();
-    doughGain.gain.setValueAtTime(0.35 * intensity, now);
-    doughGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-
-    oscDough.connect(doughFilter);
-    doughFilter.connect(doughGain);
-    if (panner) {
-      doughGain.connect(panner);
-      panner.connect(this.ctx.destination);
-    } else {
-      doughGain.connect(this.ctx.destination);
-    }
-    oscDough.start(now);
-    oscDough.stop(now + 0.16);
-
-    // B) 수분 마찰 대역 (초극소 볼륨 밴드패스)
-    const frictionBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.06, this.ctx.sampleRate);
-    const frictionData = frictionBuffer.getChannelData(0);
-    for (let i = 0; i < frictionData.length; i++) {
-      frictionData[i] = Math.random() * 2 - 1;
-    }
-    const frictionSource = this.ctx.createBufferSource();
-    frictionSource.buffer = frictionBuffer;
-
-    const frictionFilter = this.ctx.createBiquadFilter();
-    frictionFilter.type = 'bandpass';
-    frictionFilter.frequency.setValueAtTime(250, now); 
-    frictionFilter.Q.setValueAtTime(4.0, now);
-
-    const frictionGain = this.ctx.createGain();
-    frictionGain.gain.setValueAtTime(0.03 * intensity, now);
-    frictionGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-
-    frictionSource.connect(frictionFilter);
-    frictionFilter.connect(frictionGain);
-    if (panner) {
-      frictionGain.connect(panner);
-    } else {
-      frictionGain.connect(this.ctx.destination);
-    }
-    frictionSource.start(now);
-    frictionSource.stop(now + 0.06);
-
-    // C) 입기형 기포 기차 (Granular Bubble Train)
-    const bubbleCount = 4 + Math.floor(Math.random() * 5); 
-    for (let i = 0; i < bubbleCount; i++) {
-      const bubbleDelay = i * 0.012 + Math.random() * 0.015;
-      
-      const osc = this.ctx.createOscillator();
-      osc.type = 'sine'; 
-      
-      const startFreq = 220 + Math.random() * 150;
-      osc.frequency.setValueAtTime(startFreq, now + bubbleDelay);
-      osc.frequency.exponentialRampToValueAtTime(45, now + bubbleDelay + 0.018);
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(450, now + bubbleDelay);
-
-      const gainNode = this.ctx.createGain();
-      const targetGain = (0.15 + Math.random() * 0.08) * intensity;
-      gainNode.gain.setValueAtTime(0.001, now + bubbleDelay);
-      gainNode.gain.linearRampToValueAtTime(targetGain, now + bubbleDelay + 0.003);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, now + bubbleDelay + 0.018);
-
-      osc.connect(filter);
-      filter.connect(gainNode);
-      if (panner) {
-        gainNode.connect(panner);
-      } else {
-        gainNode.connect(this.ctx.destination);
-      }
-
-      osc.start(now + bubbleDelay);
-      osc.stop(now + bubbleDelay + 0.02);
-    }
-  }
-
-  // 1-6. 반죽 놓을 때 찰싹 달라붙는 찰떡 슬랩 사운드
   playSlap(intensity = 0.5, position = null) {
     if (this.muted || !this.ctx) return;
     this.resume();
@@ -1770,6 +1576,8 @@ class App3D {
     }
     this.particles.forEach(p => p.destroy());
     this.particles = [];
+
+    audio.activeSkin = this.activeSkin;
 
     switch (this.activeSkin) {
       case 'green-apple':
