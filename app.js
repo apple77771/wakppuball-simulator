@@ -796,6 +796,7 @@ class GreenAppleBall {
     
     this.hasGeneratedCracks = false;
     this.crackBranches = [];
+    this.lastPlayedPressure = 0.0;
     this.softBody = null;
     this.initMeshes();
   }
@@ -954,8 +955,17 @@ class GreenAppleBall {
       const stretch = 1.0 + (this.pressure * 0.06);
       this.group.scale.set(stretch, squash, stretch);
 
-      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 그 외 랜덤 재생
-      if (pointer.justPressed || Math.random() < 0.15) {
+      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생
+      let shouldPlayCrunch = pointer.justPressed;
+      if (this.pressure - this.lastPlayedPressure > 0.08) {
+        shouldPlayCrunch = true;
+        this.lastPlayedPressure = this.pressure;
+      }
+      if (Math.random() < 0.12) {
+        shouldPlayCrunch = true;
+      }
+
+      if (shouldPlayCrunch) {
         const pitch = (isFrozen ? 1.2 : 1.0);
         audio.playCrunch('apple', pitch, hitPt); 
         if (navigator.vibrate) navigator.vibrate(isFrozen ? 12 : 8);
@@ -969,6 +979,7 @@ class GreenAppleBall {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
+      this.lastPlayedPressure = this.pressure; // 릴리즈 시 다음 터치 즉시 소리 유도
 
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
@@ -1058,6 +1069,7 @@ class ButterStickBall {
     this.stage = 0;
     this.pressure = 0.0;
     this.deformY = 0;
+    this.lastPlayedPressure = 0.0;
     this.softBody = null;
     this.flakes = [];
     this.initMeshes();
@@ -1153,6 +1165,12 @@ class ButterStickBall {
         const stretch = 1.0 + (this.pressure * 0.06);
         this.group.scale.set(stretch, squash, stretch);
 
+        // 터치 즉시 혹은 압력 8% 증가 시마다 소리 트리거
+        if (pointer.justPressed || (this.pressure - this.lastPlayedPressure > 0.08)) {
+          peeledSomething = true;
+          this.lastPlayedPressure = this.pressure;
+        }
+
         const targetData = this.flakes.find(f => f.mesh === hitFlake);
         if (targetData) {
           const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
@@ -1182,6 +1200,7 @@ class ButterStickBall {
       }
     } else {
       this.pressure *= 0.85; // 압력 서서히 해제
+      this.lastPlayedPressure = this.pressure; // 릴리즈 시 다음 터치 즉시 소리 유도
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
       this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
@@ -1274,6 +1293,7 @@ class MiniBalloonBall {
     this.pressure = 0.0;
     this.deformX = 0;
     this.deformY = 0;
+    this.lastPlayedPressure = 0.0;
     this.softBody = null;
 
     this.beadData = [
@@ -1415,8 +1435,17 @@ class MiniBalloonBall {
         }
       });
 
-      // 즉각적인 사운드 반응
-      if (pointer.justPressed || Math.random() < 0.15) {
+      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생
+      let shouldPlayCrunch = pointer.justPressed;
+      if (this.pressure - this.lastPlayedPressure > 0.08) {
+        shouldPlayCrunch = true;
+        this.lastPlayedPressure = this.pressure;
+      }
+      if (Math.random() < 0.12) {
+        shouldPlayCrunch = true;
+      }
+
+      if (shouldPlayCrunch) {
         const pitch = isFrozen ? 1.6 : 1.35;
         audio.playCrunch('balloon', pitch, hitPt);
         if (navigator.vibrate) navigator.vibrate(isFrozen ? 8 : 5);
@@ -1483,6 +1512,7 @@ class MiniBalloonBall {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
+      this.lastPlayedPressure = this.pressure; // 릴리즈 시 다음 터치 즉시 소리 유도
 
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
@@ -1562,6 +1592,7 @@ class ChocoBananaBall {
     
     this.hasGeneratedCracks = false;
     this.crackBranches = [];
+    this.lastPlayedPressure = 0.0;
     this.softBody = null;
     this.initMeshes();
   }
@@ -1698,8 +1729,17 @@ class ChocoBananaBall {
       const stretch = 1.0 + (this.pressure * 0.06);
       this.group.scale.set(stretch, squash, stretch);
 
-      // 즉각 사운드
-      if (pointer.justPressed || Math.random() < 0.15) {
+      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생
+      let shouldPlayCrunch = pointer.justPressed;
+      if (this.pressure - this.lastPlayedPressure > 0.08) {
+        shouldPlayCrunch = true;
+        this.lastPlayedPressure = this.pressure;
+      }
+      if (Math.random() < 0.12) {
+        shouldPlayCrunch = true;
+      }
+
+      if (shouldPlayCrunch) {
         const pitch = isFrozen ? 0.75 : 0.62;
         audio.playCrunch('choco', pitch, hitPt); 
         if (navigator.vibrate) navigator.vibrate(isFrozen ? 9 : 6);
@@ -1713,6 +1753,7 @@ class ChocoBananaBall {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
+      this.lastPlayedPressure = this.pressure; // 릴리즈 시 다음 터치 즉시 소리 유도
 
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
