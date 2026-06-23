@@ -439,7 +439,7 @@ class SoftBody3D {
         color: this.color,
         roughness: 0.8,
         metalness: 0.0,
-        sheen: 1.0,
+        sheen: new THREE.Color(0xffffff),
         sheenRoughness: 0.5,
         transparent: true,
         opacity: 1.0
@@ -473,7 +473,7 @@ class SoftBody3D {
         color: this.color,
         roughness: 0.7,
         metalness: 0.0,
-        sheen: 0.8,
+        sheen: new THREE.Color(0xffffff),
         sheenRoughness: 0.4,
         transparent: true,
         opacity: 1.0
