@@ -121,6 +121,19 @@ html, body {
   box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
 }
 
+#btn-freeze-toggle.active {
+  color: #a5f3fc;
+  border-color: rgba(165, 243, 252, 0.4);
+  background: rgba(165, 243, 252, 0.12);
+  box-shadow: 0 0 18px rgba(165, 243, 252, 0.35);
+  animation: pulseFreeze 2s infinite ease-in-out;
+}
+
+@keyframes pulseFreeze {
+  0%, 100% { box-shadow: 0 0 10px rgba(165, 243, 252, 0.2); }
+  50% { box-shadow: 0 0 22px rgba(165, 243, 252, 0.5); }
+}
+
 .hud-btn.reset-btn:active {
   transform: rotate(180deg) scale(0.9);
 }

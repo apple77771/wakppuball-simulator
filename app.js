@@ -340,7 +340,7 @@ const audio = new AudioSynth();
 // 2. 3D 입자 물리 시스템 (3D Physical Debris Particles)
 // ============================================================================
 class Particle3D {
-  constructor(scene, pos, color, size, type = 'normal') {
+  constructor(scene, pos, color, size, type = 'normal', launchVel = null) {
     this.scene = scene;
     this.type = type;
     this.color = color;
@@ -354,7 +354,8 @@ class Particle3D {
     } else if (type === 'flake') {
       geo = new THREE.BoxGeometry(size * 1.4, size * 1.4, size * 0.15);
     } else {
-      geo = new THREE.SphereGeometry(size, 6, 6);
+      // 왁스 껍질 느낌의 얇은 파편 조각 형태 기하구조
+      geo = new THREE.BoxGeometry(size * (1.0 + Math.random() * 0.8), size * (0.8 + Math.random() * 0.6), size * 0.2);
     }
 
     let mat;
@@ -372,11 +373,17 @@ class Particle3D {
     this.mesh.receiveShadow = true;
     this.scene.add(this.mesh);
 
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 2.0 + Math.random() * 4.5;
-    this.vx = Math.cos(angle) * speed * 0.7;
-    this.vy = 3.0 + Math.random() * 5.0; 
-    this.vz = (Math.random() - 0.5) * speed * 0.7;
+    if (launchVel) {
+      this.vx = launchVel.x;
+      this.vy = launchVel.y;
+      this.vz = launchVel.z;
+    } else {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2.0 + Math.random() * 4.5;
+      this.vx = Math.cos(angle) * speed * 0.7;
+      this.vy = 3.0 + Math.random() * 5.0; 
+      this.vz = (Math.random() - 0.5) * speed * 0.7;
+    }
 
     this.gravity = -0.22;
     this.friction = 0.97;
@@ -651,11 +658,12 @@ class SoftBody3D {
             navigator.vibrate(6);
           }
 
-          if (this.meltShards && this.shardsOpacity > 0) {
+          if (this.meltShards && this.shardsOpacity > 0.18) {
             this.shardsOpacity -= dragSpeed * 0.0025;
-            if (this.shardsOpacity < 0) this.shardsOpacity = 0;
+            if (this.shardsOpacity < 0.18) this.shardsOpacity = 0.18;
 
-            const factor = 1.0 - this.shardsOpacity;
+            // 0.18까지 수렴하도록 맵핑하여 색상 변환 계수 산출
+            const factor = (1.0 - this.shardsOpacity) / (1.0 - 0.18);
             this.material.color.copy(new THREE.Color(interpolateColor(this.baseColor, this.targetColor, factor)));
 
             this.toppingsList.forEach(t => {
@@ -682,8 +690,23 @@ class SoftBody3D {
 
     this.particles.forEach(p => p.force.set(0, 0, 0));
 
-    this.particles.forEach(p => {
-      const d = p.pos.clone();
+    let dragOffset = new THREE.Vector3();
+    let dragP = null;
+    if (pointer.active && this.draggedParticleIdx !== -1) {
+      dragP = this.particles[this.draggedParticleIdx];
+      dragOffset.copy(dragP.pos).sub(dragP.originalPos);
+    }
+
+    this.particles.forEach((p, idx) => {
+      // 드래그 방향으로 중심 복원점(targetCenter)을 당겨 점성 찌그러짐 표현
+      const targetCenter = new THREE.Vector3(0, 0, 0);
+      if (dragP) {
+        const distToDrag = p.originalPos.distanceTo(dragP.originalPos);
+        const weight = Math.exp(-distToDrag * 0.7); // 드래그 부위와 가까운 정점들 위주로 변형
+        targetCenter.addScaledVector(dragOffset, weight * 0.48);
+      }
+
+      const d = p.pos.clone().sub(targetCenter);
       const dist = d.length();
       const rest = p.originalPos.length();
       if (dist > 0.01) {
@@ -771,6 +794,8 @@ class GreenAppleBall {
     this.deformX = 0;
     this.deformY = 0;
     
+    this.hasGeneratedCracks = false;
+    this.crackBranches = [];
     this.softBody = null;
     this.initMeshes();
   }
@@ -828,29 +853,65 @@ class GreenAppleBall {
     }
 
     this.crackGroup = new THREE.Group();
-    const crackMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
-    for (let i = 0; i < 6; i++) {
-      const points = [];
-      const angle = (i / 6) * Math.PI * 2;
-      for (let j = 0; j <= 20; j++) {
-        const lat = (j / 20) * Math.PI - Math.PI/2;
-        points.push(new THREE.Vector3(
-          Math.cos(angle) * Math.cos(lat) * (this.r + 0.015),
-          Math.sin(lat) * (this.r + 0.015),
-          Math.sin(angle) * Math.cos(lat) * (this.r + 0.015)
-        ));
-      }
-      const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
-      const crackLine = new THREE.Line(crackGeo, crackMat);
-      this.crackGroup.add(crackLine);
-    }
     this.crackGroup.visible = false;
     this.group.add(this.crackGroup);
 
     this.scene.add(this.group);
   }
 
-  update(pointer, raycaster, targetPos, particles) {
+  generateCracks(localHitPoint) {
+    this.crackGroup.clear();
+    this.crackBranches = [];
+
+    const crackMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      linewidth: 2.5,
+      transparent: true,
+      opacity: 0.95
+    });
+
+    const numBranches = 8;
+    const normal = localHitPoint.clone().normalize();
+    let tangent = new THREE.Vector3(0, 1, 0).cross(normal);
+    if (tangent.lengthSq() < 0.01) {
+      tangent = new THREE.Vector3(1, 0, 0).cross(normal);
+    }
+    tangent.normalize();
+    const binormal = normal.clone().cross(tangent).normalize();
+
+    for (let i = 0; i < numBranches; i++) {
+      const angle = (i / numBranches) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+      const dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
+      
+      const points = [];
+      let currentPt = localHitPoint.clone().normalize().multiplyScalar(this.r + 0.015);
+      points.push(currentPt.clone());
+
+      const numSteps = 15;
+      const stepSize = (this.r * Math.PI * 0.75) / numSteps;
+
+      for (let step = 1; step <= numSteps; step++) {
+        const nextPt = currentPt.clone().addScaledVector(dir, stepSize);
+        const jitterDir = normal.clone().cross(dir).normalize();
+        nextPt.addScaledVector(jitterDir, (Math.random() - 0.5) * stepSize * 0.4);
+        nextPt.normalize().multiplyScalar(this.r + 0.015);
+        
+        points.push(nextPt.clone());
+        currentPt = nextPt;
+        dir.copy(nextPt).sub(points[points.length - 2]).normalize();
+      }
+
+      const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
+      const crackLine = new THREE.Line(crackGeo, crackMat);
+      this.crackGroup.add(crackLine);
+      this.crackBranches.push({
+        line: crackLine,
+        points: points
+      });
+    }
+  }
+
+  update(pointer, raycaster, targetPos, particles, isFrozen = false) {
     if (this.stage === 2) {
       if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
@@ -865,46 +926,95 @@ class GreenAppleBall {
       this.group.position.set(this.deformX, this.deformY, 0);
 
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += 0.002 + dragSpeed * 0.0004;
+      this.pressure += (0.002 + dragSpeed * 0.0004) * (isFrozen ? 1.55 : 1.0);
       
-      if (this.pressure > 0.3) {
-        this.stage = 1;
-        this.crackGroup.visible = true;
-        this.crackGroup.scale.setScalar(1.0 + (this.pressure - 0.3) * 0.02);
+      // 클릭 즉시 방사형 크랙 생성
+      if (!this.hasGeneratedCracks) {
+        const localHit = this.shellMesh.worldToLocal(hitPt.clone());
+        this.generateCracks(localHit);
+        this.hasGeneratedCracks = true;
       }
 
-      if (Math.random() < 0.15) {
-        audio.playCrunch('apple', 1.0, hitPt); 
-        if (navigator.vibrate) navigator.vibrate(8);
-        particles.push(new Particle3D(this.scene, hitPt, '#76ff03', 0.05 + Math.random()*0.05));
+      if (this.pressure > 0.05) {
+        this.stage = 1;
+        this.crackGroup.visible = true;
+        this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
+        
+        // 크랙 방사형 번짐 애니메이션
+        const propFactor = Math.max(0, Math.min(1.0, (this.pressure - 0.05) / 0.85));
+        this.crackBranches.forEach(branch => {
+          const totalPoints = branch.points.length;
+          const drawCount = Math.floor(propFactor * totalPoints);
+          branch.line.geometry.setDrawRange(0, drawCount);
+        });
+      }
+
+      // 압력에 따른 Y축 짓눌림 및 X/Z축 팽창 스케일링
+      const squash = 1.0 - (this.pressure * 0.16);
+      const stretch = 1.0 + (this.pressure * 0.06);
+      this.group.scale.set(stretch, squash, stretch);
+
+      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 그 외 랜덤 재생
+      if (pointer.justPressed || Math.random() < 0.15) {
+        const pitch = (isFrozen ? 1.2 : 1.0);
+        audio.playCrunch('apple', pitch, hitPt); 
+        if (navigator.vibrate) navigator.vibrate(isFrozen ? 12 : 8);
+        particles.push(new Particle3D(this.scene, hitPt, '#76ff03', (0.04 + Math.random()*0.05)*(isFrozen ? 0.65 : 1.0)));
       }
 
       if (this.pressure >= 1.0) {
-        this.explode(particles);
+        this.explode(particles, isFrozen);
       }
     } else {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
+
+      // 탄성 복원 스케일
+      this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
+      this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
+      this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
   }
 
-  explode(particles) {
+  explode(particles, isFrozen = false) {
     this.stage = 2;
     this.pressure = 1.0;
     
-    audio.playPop(170, this.group.position);
-    if (navigator.vibrate) navigator.vibrate([30, 60, 120]);
+    audio.playPop(isFrozen ? 200 : 170, this.group.position);
+    if (navigator.vibrate) navigator.vibrate(isFrozen ? [40, 80, 150] : [30, 60, 120]);
 
     const pos = this.group.position.clone();
-    for (let i = 0; i < 20; i++) {
-      const offset = new THREE.Vector3((Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r);
-      particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#76ff03', 0.06 + Math.random()*0.08, 'normal'));
+    
+    // 냉동 여부에 따른 파편 물리 파라미터 튜닝
+    const count = isFrozen ? 55 : 32;
+    const speedMult = isFrozen ? 1.5 : 1.0;
+    const sizeMult = isFrozen ? 0.65 : 1.0;
+
+    for (let i = 0; i < count; i++) {
+      const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * this.r,
+        (Math.random() - 0.5) * this.r,
+        (Math.random() - 0.5) * this.r
+      );
+      const partPos = pos.clone().add(offset);
+      
+      // 방사형 발사 물리 연산
+      const radialDir = offset.clone().normalize();
+      const speed = (2.5 + Math.random() * 4.8) * speedMult;
+      const launchVel = radialDir.multiplyScalar(speed);
+      launchVel.y += 2.0; // 분수처럼 상방 상승 가산
+
+      const shardSize = (0.05 + Math.random() * 0.07) * sizeMult;
+      particles.push(new Particle3D(this.scene, partPos, '#76ff03', shardSize, 'normal', launchVel));
+
       if (Math.random() < 0.35) {
-        particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#ff3366', 0.08 + Math.random()*0.04, 'apple'));
+        const appleVel = launchVel.clone().multiplyScalar(0.85);
+        particles.push(new Particle3D(this.scene, partPos, '#ff3366', (0.07 + Math.random() * 0.04) * sizeMult, 'apple', appleVel));
       }
       if (Math.random() < 0.45) {
-        particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#ffd700', 0.07 + Math.random()*0.05, 'star'));
+        const starVel = launchVel.clone().multiplyScalar(0.9);
+        particles.push(new Particle3D(this.scene, partPos, '#ffd700', (0.06 + Math.random() * 0.05) * sizeMult, 'star', starVel));
       }
     }
 
@@ -946,6 +1056,7 @@ class ButterStickBall {
     this.d = 1.0;
     
     this.stage = 0;
+    this.pressure = 0.0;
     this.deformY = 0;
     this.softBody = null;
     this.flakes = [];
@@ -1018,7 +1129,7 @@ class ButterStickBall {
     this.scene.add(this.group);
   }
 
-  update(pointer, raycaster, targetPos, particles) {
+  update(pointer, raycaster, targetPos, particles, isFrozen = false) {
     if (this.stage === 2) {
       if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
@@ -1033,24 +1144,34 @@ class ButterStickBall {
         const hitFlake = intersects[0].object;
         hitPt = intersects[0].point;
 
-        this.deformY = hitPt.y * 0.08;
-        this.group.scale.set(1.0, 1.0 + this.deformY, 1.0);
+        const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
+        this.pressure += (0.0025 + dragSpeed * 0.0005) * (isFrozen ? 1.55 : 1.0);
+        if (this.pressure > 1.0) this.pressure = 1.0;
+
+        // 압력에 따른 Y축 짓눌림 및 X/Z축 팽창 스케일링
+        const squash = 1.0 - (this.pressure * 0.15);
+        const stretch = 1.0 + (this.pressure * 0.06);
+        this.group.scale.set(stretch, squash, stretch);
 
         const targetData = this.flakes.find(f => f.mesh === hitFlake);
         if (targetData) {
           const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-          if (Math.random() < 0.4 || speed > 1.2) {
+          if (pointer.justPressed || Math.random() < 0.4 || speed > 1.2) {
             targetData.health -= 1;
             peeledSomething = true;
 
-            particles.push(new Particle3D(this.scene, hitPt, '#ffffff', 0.025 + Math.random()*0.02, 'flake'));
+            // 얇은 플레이크 형태 파편 비산
+            const shardSize = (0.025 + Math.random()*0.02) * (isFrozen ? 0.7 : 1.0);
+            particles.push(new Particle3D(this.scene, hitPt, '#ffffff', shardSize, 'flake'));
 
             if (targetData.health <= 0) {
               targetData.alive = false;
               this.group.remove(hitFlake);
               
-              for(let i=0; i<3; i++) {
-                particles.push(new Particle3D(this.scene, hitPt, '#ffffff', 0.04 + Math.random()*0.04, 'flake'));
+              const burstCount = isFrozen ? 6 : 3;
+              for(let i=0; i<burstCount; i++) {
+                const flakeSize = (0.04 + Math.random()*0.04) * (isFrozen ? 0.7 : 1.0);
+                particles.push(new Particle3D(this.scene, hitPt, '#ffffff', flakeSize, 'flake'));
               }
             } else {
               hitFlake.material.color.setHex(0xdddddd);
@@ -1060,32 +1181,48 @@ class ButterStickBall {
         }
       }
     } else {
-      this.deformY *= 0.82;
-      this.group.scale.set(1.0, 1.0 + this.deformY, 1.0);
+      this.pressure *= 0.85; // 압력 서서히 해제
+      // 탄성 복원 스케일
+      this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
+      this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
+      this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
 
     if (peeledSomething) {
       this.stage = 1;
-      audio.playCrunch('butter', 0.7, hitPt); 
-      if (navigator.vibrate) navigator.vibrate(7);
+      const pitch = isFrozen ? 0.85 : 0.7;
+      audio.playCrunch('butter', pitch, hitPt); 
+      if (navigator.vibrate) navigator.vibrate(isFrozen ? 10 : 7);
 
       const aliveCount = this.flakes.filter(f => f.alive).length;
       if (aliveCount / this.flakes.length <= 0.3) {
-        this.explode(particles);
+        this.explode(particles, isFrozen);
       }
     }
   }
 
-  explode(particles) {
+  explode(particles, isFrozen = false) {
     this.stage = 2;
     const pos = this.group.position.clone();
-    audio.playPop(115, pos);
-    if (navigator.vibrate) navigator.vibrate([35, 45, 80]);
+    audio.playPop(isFrozen ? 140 : 115, pos);
+    if (navigator.vibrate) navigator.vibrate(isFrozen ? [40, 60, 110] : [35, 45, 80]);
+
+    const speedMult = isFrozen ? 1.5 : 1.0;
+    const sizeMult = isFrozen ? 0.7 : 1.0;
 
     this.flakes.forEach(f => {
       if (f.alive) {
         this.group.remove(f.mesh);
-        particles.push(new Particle3D(this.scene, f.mesh.position.clone().add(pos), '#ffffff', 0.06 + Math.random()*0.05, 'flake'));
+        
+        // 방사형 발사 속도 벡터 계산
+        const fPos = f.mesh.position.clone();
+        const radialDir = fPos.clone().normalize();
+        const speed = (2.0 + Math.random() * 4.0) * speedMult;
+        const launchVel = radialDir.multiplyScalar(speed);
+        launchVel.y += 1.5; // 상방 상승 추가
+
+        const flakeSize = (0.06 + Math.random()*0.05) * sizeMult;
+        particles.push(new Particle3D(this.scene, fPos.add(pos), '#ffffff', flakeSize, 'flake', launchVel));
       }
     });
 
@@ -1187,7 +1324,7 @@ class MiniBalloonBall {
     this.scene.add(this.group);
   }
 
-  update(pointer, raycaster, targetPos, particles) {
+  update(pointer, raycaster, targetPos, particles, isFrozen = false) {
     if (this.stage === 2) {
       if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
@@ -1263,7 +1400,12 @@ class MiniBalloonBall {
       this.group.position.set(this.deformX, this.deformY, 0);
 
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += 0.0016 + dragSpeed * 0.0003;
+      this.pressure += (0.0016 + dragSpeed * 0.0003) * (isFrozen ? 1.5 : 1.0);
+
+      // 압력에 따른 Y축 짓눌림 및 X/Z축 팽창 스케일링
+      const squash = 1.0 - (this.pressure * 0.15);
+      const stretch = 1.0 + (this.pressure * 0.06);
+      this.group.scale.set(stretch, squash, stretch);
 
       this.beads.forEach(b => {
         if (b.data.stage !== 2) {
@@ -1273,10 +1415,17 @@ class MiniBalloonBall {
         }
       });
 
-      if (Math.random() < 0.15) {
-        audio.playCrunch('balloon', 1.35, hitPt);
-        if (navigator.vibrate) navigator.vibrate(5);
+      // 즉각적인 사운드 반응
+      if (pointer.justPressed || Math.random() < 0.15) {
+        const pitch = isFrozen ? 1.6 : 1.35;
+        audio.playCrunch('balloon', pitch, hitPt);
+        if (navigator.vibrate) navigator.vibrate(isFrozen ? 8 : 5);
       }
+
+      // 비드들의 순차 파열
+      const beadPartCount = isFrozen ? 22 : 12;
+      const speedMult = isFrozen ? 1.55 : 1.0;
+      const sizeMult = isFrozen ? 0.65 : 1.0;
 
       if (this.pressure > 0.05 && this.pressure < 0.25 && this.beads[0].data.stage !== 2) {
         this.beads[0].data.stage = 1;
@@ -1285,9 +1434,12 @@ class MiniBalloonBall {
         this.beads[0].data.stage = 2;
         this.group.remove(this.beads[0].mesh);
         audio.playMiniPop(this.beads[0].data.pos.clone().add(this.group.position));
-        if (navigator.vibrate) navigator.vibrate([10, 35]);
-        for (let k = 0; k < 12; k++) {
-          particles.push(new Particle3D(this.scene, this.beads[0].data.pos.clone().add(this.group.position), this.beads[0].data.color, 0.04 + Math.random()*0.04));
+        if (navigator.vibrate) navigator.vibrate(isFrozen ? [15, 50] : [10, 35]);
+        
+        for (let k = 0; k < beadPartCount; k++) {
+          const offset = new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3);
+          const launchVel = offset.clone().normalize().multiplyScalar((3.0 + Math.random()*4.0)*speedMult);
+          particles.push(new Particle3D(this.scene, this.beads[0].data.pos.clone().add(this.group.position).add(offset), this.beads[0].data.color, (0.04 + Math.random()*0.04)*sizeMult, 'normal', launchVel));
         }
       }
 
@@ -1298,9 +1450,12 @@ class MiniBalloonBall {
         this.beads[1].data.stage = 2;
         this.group.remove(this.beads[1].mesh);
         audio.playMiniPop(this.beads[1].data.pos.clone().add(this.group.position));
-        if (navigator.vibrate) navigator.vibrate([10, 35]);
-        for (let k = 0; k < 12; k++) {
-          particles.push(new Particle3D(this.scene, this.beads[1].data.pos.clone().add(this.group.position), this.beads[1].data.color, 0.04 + Math.random()*0.04));
+        if (navigator.vibrate) navigator.vibrate(isFrozen ? [15, 50] : [10, 35]);
+        
+        for (let k = 0; k < beadPartCount; k++) {
+          const offset = new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3);
+          const launchVel = offset.clone().normalize().multiplyScalar((3.0 + Math.random()*4.0)*speedMult);
+          particles.push(new Particle3D(this.scene, this.beads[1].data.pos.clone().add(this.group.position).add(offset), this.beads[1].data.color, (0.04 + Math.random()*0.04)*sizeMult, 'normal', launchVel));
         }
       }
 
@@ -1311,33 +1466,51 @@ class MiniBalloonBall {
         this.beads[2].data.stage = 2;
         this.group.remove(this.beads[2].mesh);
         audio.playMiniPop(this.beads[2].data.pos.clone().add(this.group.position));
-        if (navigator.vibrate) navigator.vibrate([10, 35]);
-        for (let k = 0; k < 12; k++) {
-          particles.push(new Particle3D(this.scene, this.beads[2].data.pos.clone().add(this.group.position), this.beads[2].data.color, 0.04 + Math.random()*0.04));
+        if (navigator.vibrate) navigator.vibrate(isFrozen ? [15, 50] : [10, 35]);
+        
+        for (let k = 0; k < beadPartCount; k++) {
+          const offset = new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3);
+          const launchVel = offset.clone().normalize().multiplyScalar((3.0 + Math.random()*4.0)*speedMult);
+          particles.push(new Particle3D(this.scene, this.beads[2].data.pos.clone().add(this.group.position).add(offset), this.beads[2].data.color, (0.04 + Math.random()*0.04)*sizeMult, 'normal', launchVel));
         }
       }
 
       const allBursted = this.beads.every(b => b.data.stage === 2);
       if (this.pressure >= 1.0 || allBursted) {
-        this.explode(particles);
+        this.explode(particles, isFrozen);
       }
     } else {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
+
+      // 탄성 복원 스케일
+      this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
+      this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
+      this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
   }
 
-  explode(particles) {
+  explode(particles, isFrozen = false) {
     this.stage = 2;
     const pos = this.group.position.clone();
-    audio.playPop(190, pos);
-    if (navigator.vibrate) navigator.vibrate([30, 40, 90]);
+    audio.playPop(isFrozen ? 220 : 190, pos);
+    if (navigator.vibrate) navigator.vibrate(isFrozen ? [40, 50, 120] : [30, 40, 90]);
+
+    const speedMult = isFrozen ? 1.5 : 1.0;
+    const sizeMult = isFrozen ? 0.65 : 1.0;
 
     this.beads.forEach(b => {
       if (b.data.stage !== 2) {
         this.group.remove(b.mesh);
-        particles.push(new Particle3D(this.scene, b.data.pos.clone().add(pos), b.data.color, 0.05 + Math.random()*0.05));
+        
+        const bPos = b.data.pos.clone();
+        const radialDir = bPos.clone().normalize();
+        const speed = (2.5 + Math.random() * 4.5) * speedMult;
+        const launchVel = radialDir.multiplyScalar(speed);
+        launchVel.y += 2.0;
+
+        particles.push(new Particle3D(this.scene, bPos.add(pos), b.data.color, (0.05 + Math.random()*0.05)*sizeMult, 'normal', launchVel));
       }
     });
 
@@ -1387,6 +1560,8 @@ class ChocoBananaBall {
     this.deformX = 0;
     this.deformY = 0;
     
+    this.hasGeneratedCracks = false;
+    this.crackBranches = [];
     this.softBody = null;
     this.initMeshes();
   }
@@ -1422,30 +1597,65 @@ class ChocoBananaBall {
     this.group.add(this.chocoMesh);
 
     this.crackGroup = new THREE.Group();
-    const crackMat = new THREE.LineBasicMaterial({ color: 0xffd54f, linewidth: 2 });
-    
-    for(let r=0; r<4; r++) {
-      const points = [];
-      const ringR = this.r * (0.2 + r * 0.25) + 0.015;
-      for (let i = 0; i <= 32; i++) {
-        const theta = (i / 32) * Math.PI * 2;
-        points.push(new THREE.Vector3(
-          Math.cos(theta) * ringR,
-          Math.sin(theta) * ringR,
-          (Math.random()-0.5)*0.1 
-        ));
-      }
-      const ringGeo = new THREE.BufferGeometry().setFromPoints(points);
-      const ringLine = new THREE.Line(ringGeo, crackMat);
-      this.crackGroup.add(ringLine);
-    }
     this.crackGroup.visible = false;
     this.group.add(this.crackGroup);
 
     this.scene.add(this.group);
   }
 
-  update(pointer, raycaster, targetPos, particles) {
+  generateCracks(localHitPoint) {
+    this.crackGroup.clear();
+    this.crackBranches = [];
+
+    const crackMat = new THREE.LineBasicMaterial({
+      color: 0xffd54f,
+      linewidth: 2.5,
+      transparent: true,
+      opacity: 0.95
+    });
+
+    const numBranches = 8;
+    const normal = localHitPoint.clone().normalize();
+    let tangent = new THREE.Vector3(0, 1, 0).cross(normal);
+    if (tangent.lengthSq() < 0.01) {
+      tangent = new THREE.Vector3(1, 0, 0).cross(normal);
+    }
+    tangent.normalize();
+    const binormal = normal.clone().cross(tangent).normalize();
+
+    for (let i = 0; i < numBranches; i++) {
+      const angle = (i / numBranches) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+      const dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
+      
+      const points = [];
+      let currentPt = localHitPoint.clone().normalize().multiplyScalar(this.r + 0.015);
+      points.push(currentPt.clone());
+
+      const numSteps = 15;
+      const stepSize = (this.r * Math.PI * 0.75) / numSteps;
+
+      for (let step = 1; step <= numSteps; step++) {
+        const nextPt = currentPt.clone().addScaledVector(dir, stepSize);
+        const jitterDir = normal.clone().cross(dir).normalize();
+        nextPt.addScaledVector(jitterDir, (Math.random() - 0.5) * stepSize * 0.4);
+        nextPt.normalize().multiplyScalar(this.r + 0.015);
+        
+        points.push(nextPt.clone());
+        currentPt = nextPt;
+        dir.copy(nextPt).sub(points[points.length - 2]).normalize();
+      }
+
+      const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
+      const crackLine = new THREE.Line(crackGeo, crackMat);
+      this.crackGroup.add(crackLine);
+      this.crackBranches.push({
+        line: crackLine,
+        points: points
+      });
+    }
+  }
+
+  update(pointer, raycaster, targetPos, particles, isFrozen = false) {
     if (this.stage === 2) {
       if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
@@ -1460,40 +1670,88 @@ class ChocoBananaBall {
       this.group.position.set(this.deformX, this.deformY, 0);
 
       const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += 0.0015 + speed * 0.0002;
+      this.pressure += (0.0015 + speed * 0.0002) * (isFrozen ? 1.5 : 1.0);
 
-      if (this.pressure > 0.25) {
-        this.stage = 1;
-        this.crackGroup.visible = true;
+      // 즉각적인 방사형 크랙 생성
+      if (!this.hasGeneratedCracks) {
+        const localHit = this.shellMesh.worldToLocal(hitPt.clone());
+        this.generateCracks(localHit);
+        this.hasGeneratedCracks = true;
       }
 
-      if (Math.random() < 0.15) {
-        audio.playCrunch('choco', 0.62, hitPt); 
-        if (navigator.vibrate) navigator.vibrate(6);
-        particles.push(new Particle3D(this.scene, hitPt, '#4e342e', 0.05 + Math.random()*0.05));
+      if (this.pressure > 0.05) {
+        this.stage = 1;
+        this.crackGroup.visible = true;
+        this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
+        
+        // 크랙 방사형 번짐 애니메이션
+        const propFactor = Math.max(0, Math.min(1.0, (this.pressure - 0.05) / 0.85));
+        this.crackBranches.forEach(branch => {
+          const totalPoints = branch.points.length;
+          const drawCount = Math.floor(propFactor * totalPoints);
+          branch.line.geometry.setDrawRange(0, drawCount);
+        });
+      }
+
+      // 압력에 따른 Y축 짓눌림 및 X/Z축 팽창 스케일링
+      const squash = 1.0 - (this.pressure * 0.16);
+      const stretch = 1.0 + (this.pressure * 0.06);
+      this.group.scale.set(stretch, squash, stretch);
+
+      // 즉각 사운드
+      if (pointer.justPressed || Math.random() < 0.15) {
+        const pitch = isFrozen ? 0.75 : 0.62;
+        audio.playCrunch('choco', pitch, hitPt); 
+        if (navigator.vibrate) navigator.vibrate(isFrozen ? 9 : 6);
+        particles.push(new Particle3D(this.scene, hitPt, '#4e342e', (0.04 + Math.random()*0.05)*(isFrozen ? 0.65 : 1.0)));
       }
 
       if (this.pressure >= 1.0) {
-        this.explode(particles);
+        this.explode(particles, isFrozen);
       }
     } else {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
+
+      // 탄성 복원 스케일
+      this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
+      this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
+      this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
   }
 
-  explode(particles) {
+  explode(particles, isFrozen = false) {
     this.stage = 2;
     const pos = this.group.position.clone();
-    audio.playPop(125, pos);
-    if (navigator.vibrate) navigator.vibrate([25, 35, 100]);
+    audio.playPop(isFrozen ? 150 : 125, pos);
+    if (navigator.vibrate) navigator.vibrate(isFrozen ? [35, 55, 130] : [25, 35, 100]);
 
-    for (let i = 0; i < 20; i++) {
-      const offset = new THREE.Vector3((Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r);
-      particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#4e342e', 0.06 + Math.random() * 0.06));
+    // 냉동 여부에 따른 파편 물리 파라미터 튜닝
+    const count = isFrozen ? 55 : 30;
+    const speedMult = isFrozen ? 1.55 : 1.0;
+    const sizeMult = isFrozen ? 0.65 : 1.0;
+
+    for (let i = 0; i < count; i++) {
+      const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * this.r,
+        (Math.random() - 0.5) * this.r,
+        (Math.random() - 0.5) * this.r
+      );
+      const partPos = pos.clone().add(offset);
+      
+      // 방사형 발사 물리 연산
+      const radialDir = offset.clone().normalize();
+      const speed = (2.2 + Math.random() * 4.5) * speedMult;
+      const launchVel = radialDir.multiplyScalar(speed);
+      launchVel.y += 1.8;
+
+      const shardSize = (0.05 + Math.random() * 0.06) * sizeMult;
+      particles.push(new Particle3D(this.scene, partPos, '#4e342e', shardSize, 'normal', launchVel));
+
       if (Math.random() < 0.4) {
-        particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#ffd54f', 0.05 + Math.random() * 0.05));
+        const bananaVel = launchVel.clone().multiplyScalar(0.85);
+        particles.push(new Particle3D(this.scene, partPos, '#ffd54f', (0.05 + Math.random() * 0.05) * sizeMult, 'normal', bananaVel));
       }
     }
 
@@ -1529,14 +1787,16 @@ class App3D {
     
     this.btnAudio = document.getElementById('btn-audio-toggle');
     this.btnHaptic = document.getElementById('btn-haptic-toggle');
+    this.btnFreeze = document.getElementById('btn-freeze-toggle');
     this.btnReset = document.getElementById('btn-reset');
     this.hudBallName = document.getElementById('ball-name-display');
     this.hudStatus = document.getElementById('status-title');
     this.guideOverlay = document.getElementById('interaction-guide');
     this.cards = document.querySelectorAll('.skin-card');
 
-    this.pointer = { x: 0, y: 0, px: 0, py: 0, active: false, xNDC: 0, yNDC: 0 };
+    this.pointer = { x: 0, y: 0, px: 0, py: 0, active: false, xNDC: 0, yNDC: 0, justPressed: false };
     this.hapticEnabled = true;
+    this.isFrozen = false;
 
     this.activeSkin = 'green-apple';
     this.ball = null;
@@ -1685,6 +1945,7 @@ class App3D {
 
     const handleStart = (e) => {
       updatePointer(e, true);
+      this.pointer.justPressed = true; // 터치/클릭 시작 플래그 설정
       this.raycaster.setFromCamera(new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC), this.camera);
       
       let intersects = [];
@@ -1754,6 +2015,17 @@ class App3D {
       }
     });
 
+    if (this.btnFreeze) {
+      this.btnFreeze.addEventListener('click', () => {
+        this.isFrozen = !this.isFrozen;
+        if (this.isFrozen) {
+          this.btnFreeze.classList.add('active');
+        } else {
+          this.btnFreeze.classList.remove('active');
+        }
+      });
+    }
+
     this.btnReset.addEventListener('click', () => {
       this.spawnBall();
     });
@@ -1779,7 +2051,7 @@ class App3D {
     );
 
     if (this.ball) {
-      this.ball.update(this.pointer, this.raycaster, target3D, this.particles);
+      this.ball.update(this.pointer, this.raycaster, target3D, this.particles, this.isFrozen);
       
       if (this.ball.stage === 1) {
         this.hudStatus.textContent = "금이 감";
@@ -1801,6 +2073,7 @@ class App3D {
 
     this.pointer.px = this.pointer.x;
     this.pointer.py = this.pointer.y;
+    this.pointer.justPressed = false; // 매 프레임 끝에서 justPressed 플래그 클리어
 
     this.renderer.render(this.scene, this.camera);
     requestAnimationFrame(() => this.animate());
