@@ -10,6 +10,10 @@ class AudioSynth {
     this.activeSkin = 'green-apple';
     this.lastCrunchTime = 0;
     this.lastKneadTime = 0;
+    
+    this.activeSources = [];
+    this.currentCrunch = null;
+    this.currentKnead = null;
   }
 
   init() {
@@ -128,15 +132,43 @@ class AudioSynth {
     }
 
     source.start(now);
-    return { source, gainNode };
+
+    const sourceObj = { source, gainNode };
+    this.activeSources.push(sourceObj);
+
+    source.onended = () => {
+      const idx = this.activeSources.indexOf(sourceObj);
+      if (idx !== -1) {
+        this.activeSources.splice(idx, 1);
+      }
+    };
+
+    return sourceObj;
+  }
+
+  stopAllSounds() {
+    this.activeSources.forEach(s => {
+      try {
+        s.source.stop();
+      } catch (e) {}
+    });
+    this.activeSources = [];
+    this.currentCrunch = null;
+    this.currentKnead = null;
   }
 
   playCrunch(type = 'apple', pitchMultiplier = 1.0, position = null) {
     const now = this.ctx ? this.ctx.currentTime : 0;
-    if (now - this.lastCrunchTime < 0.22) return; // 220ms throttle to prevent overlapping noise
+    if (now - this.lastCrunchTime < 0.15) return; // 150ms 딜레이
     this.lastCrunchTime = now;
 
-    // Map skin names
+    // 새로운 크랙음 재생 전 이전 크랙음 즉시 정지하여 중첩 방지
+    if (this.currentCrunch) {
+      try {
+        this.currentCrunch.source.stop();
+      } catch (e) {}
+    }
+
     let mappedType = type;
     if (type === 'green-apple') mappedType = 'apple';
     if (type === 'butter-stick') mappedType = 'butter';
@@ -146,7 +178,7 @@ class AudioSynth {
     const idx = Math.random() < 0.5 ? 1 : 2;
     const name = `${mappedType}_crack_${idx}`;
     const pitch = (0.95 + Math.random() * 0.1) * pitchMultiplier;
-    this.playBuffer(name, position, false, pitch, 0.95);
+    this.currentCrunch = this.playBuffer(name, position, false, pitch, 0.95);
   }
 
   playPop(freq = 120, position = null) {
@@ -156,27 +188,34 @@ class AudioSynth {
     else if (this.activeSkin === 'mini-balloon') type = 'balloon';
     else if (this.activeSkin === 'choco-banana') type = 'choco';
 
-    const name = `${type}_crack_2`; // Play the heavier second crack on explosion
+    const name = `${type}_crack_2`;
     this.playBuffer(name, position, false, 0.9, 1.25);
   }
 
   playSquelch(intensity = 0.5, position = null) {
     const now = this.ctx ? this.ctx.currentTime : 0;
-    const throttle = Math.max(0.14, 0.42 - intensity * 0.25); 
+    const throttle = Math.max(0.12, 0.4 - intensity * 0.22); 
     if (now - this.lastKneadTime < throttle) return;
     this.lastKneadTime = now;
 
+    // 새로운 반죽음 재생 전 이전 반죽음 즉시 정지하여 중첩 방지
+    if (this.currentKnead) {
+      try {
+        this.currentKnead.source.stop();
+      } catch (e) {}
+    }
+
     let type = 'apple';
     if (this.activeSkin === 'green-apple') type = 'apple';
-    else if (this.activeSkin === 'butter-stick') type = 'choco'; // butter reuses choco
-    else if (this.activeSkin === 'mini-balloon') type = 'apple'; // balloon reuses apple
+    else if (this.activeSkin === 'butter-stick') type = 'choco'; 
+    else if (this.activeSkin === 'mini-balloon') type = 'apple'; 
     else if (this.activeSkin === 'choco-banana') type = 'choco';
 
     const idx = Math.random() < 0.5 ? 1 : 2;
     const name = `${type}_knead_${idx}`;
     const volume = Math.min(1.0, 0.25 + intensity * 0.75);
     const pitch = 0.88 + Math.random() * 0.24;
-    this.playBuffer(name, position, false, pitch, volume);
+    this.currentKnead = this.playBuffer(name, position, false, pitch, volume);
   }
 
   playMiniPop(position = null) {
@@ -1571,6 +1610,8 @@ class App3D {
   }
 
   spawnBall() {
+    audio.stopAllSounds();
+
     if (this.ball) {
       this.ball.destroy();
     }
