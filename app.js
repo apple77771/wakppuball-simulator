@@ -159,7 +159,7 @@ class AudioSynth {
 
   playCrunch(type = 'apple', pitchMultiplier = 1.0, position = null) {
     const now = this.ctx ? this.ctx.currentTime : 0;
-    if (now - this.lastCrunchTime < 0.15) return; // 150ms 딜레이
+    if (this.lastCrunchTime > 0 && (now - this.lastCrunchTime < 0.08)) return; // 80ms 딜레이로 단축
     this.lastCrunchTime = now;
 
     // 새로운 크랙음 재생 전 이전 크랙음 즉시 정지하여 중첩 방지
@@ -178,7 +178,7 @@ class AudioSynth {
     const idx = Math.random() < 0.5 ? 1 : 2;
     const name = `${mappedType}_crack_${idx}`;
     const pitch = (0.95 + Math.random() * 0.1) * pitchMultiplier;
-    this.currentCrunch = this.playBuffer(name, position, false, pitch, 0.95);
+    this.currentCrunch = this.playBuffer(name, position, false, pitch, 1.15); // 볼륨을 1.15로 상향하여 타격감 증가
   }
 
   playPop(freq = 120, position = null) {
@@ -195,7 +195,7 @@ class AudioSynth {
   playSquelch(intensity = 0.5, position = null) {
     const now = this.ctx ? this.ctx.currentTime : 0;
     const throttle = Math.max(0.12, 0.4 - intensity * 0.22); 
-    if (now - this.lastKneadTime < throttle) return;
+    if (this.lastKneadTime > 0 && (now - this.lastKneadTime < throttle)) return;
     this.lastKneadTime = now;
 
     // 새로운 반죽음 재생 전 이전 반죽음 즉시 정지하여 중첩 방지
@@ -595,9 +595,10 @@ class SoftBody3D {
       } else if (toppingType === 'star') {
         geo = new THREE.ConeGeometry(size, size * 1.4, 4);
       } else if (toppingType === 'flake') {
-        geo = new THREE.BoxGeometry(size * 1.3, size * 1.3, size * 0.1);
+        geo = new THREE.BoxGeometry(size * (1.5 + Math.random() * 0.8), size * (1.5 + Math.random() * 0.8), 0.04);
       } else {
-        geo = new THREE.SphereGeometry(size, 5, 5);
+        // 실제 껍데기가 깨져 밀착된 파편 느낌을 주기 위해 넓고 얇은 평면 기하구조 적용
+        geo = new THREE.BoxGeometry(size * (1.8 + Math.random() * 1.4), size * (1.4 + Math.random() * 1.0), size * 0.15);
       }
 
       let color = Array.isArray(this.shardColor) ? this.shardColor[Math.floor(Math.random() * this.shardColor.length)] : this.shardColor;
@@ -658,21 +659,7 @@ class SoftBody3D {
             navigator.vibrate(6);
           }
 
-          if (this.meltShards && this.shardsOpacity > 0.18) {
-            this.shardsOpacity -= dragSpeed * 0.0025;
-            if (this.shardsOpacity < 0.18) this.shardsOpacity = 0.18;
 
-            // 0.18까지 수렴하도록 맵핑하여 색상 변환 계수 산출
-            const factor = (1.0 - this.shardsOpacity) / (1.0 - 0.18);
-            this.material.color.copy(new THREE.Color(interpolateColor(this.baseColor, this.targetColor, factor)));
-
-            this.toppingsList.forEach(t => {
-              const sc = Math.max(0.001, t.originalSize * this.shardsOpacity);
-              t.mesh.scale.set(sc / t.originalSize, sc / t.originalSize, sc / t.originalSize);
-              t.mesh.material.transparent = true;
-              t.mesh.material.opacity = this.shardsOpacity;
-            });
-          }
         }
       }
     } else {
@@ -1705,7 +1692,7 @@ class ChocoBananaBall {
 
       // 즉각적인 방사형 크랙 생성
       if (!this.hasGeneratedCracks) {
-        const localHit = this.shellMesh.worldToLocal(hitPt.clone());
+        const localHit = this.chocoMesh.worldToLocal(hitPt.clone());
         this.generateCracks(localHit);
         this.hasGeneratedCracks = true;
       }
@@ -2138,5 +2125,6 @@ function interpolateColor(color1, color2, factor) {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  audio.init(); // 오디오 리소스 즉시 프리로드 시작
   new App3D();
 });
