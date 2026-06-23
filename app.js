@@ -492,9 +492,9 @@ class SoftBody3D {
     this.springs = [];
     this.toppingsList = [];
 
-    this.kCenter = 0.005; // 0.015 -> 0.005로 크게 낮춤: 탄성 복원력을 대폭 줄여 클레이 특유의 쫀득하고 느린 형태 복원 유도
-    this.kEdge = 0.08;    // 0.28 -> 0.08로 낮춤: 엣지 강도를 낮춰 고무공 느낌을 빼고 찰지게 늘어나도록 설정
-    this.damping = 0.46;  // 0.64 -> 0.46으로 조율: 속도 감쇠를 높여 출렁이는 고무푸딩 느낌 대신 끈적하게 달라붙어 멎는 질감 구현
+    this.kCenter = 0.0028; // 전역 앵커 복원 강도를 낮추어 엄청나게 길고 쫀득하게 늘어나게 설정
+    this.kEdge = 0.06;    // 모서리 장력을 낮춤
+    this.damping = 0.44;  // 감쇠(Viscous friction)를 강화하여 고무 진동 완전 억제
     this.gravity = 0.0; 
 
     this.draggedParticleIdx = -1;
@@ -516,13 +516,15 @@ class SoftBody3D {
     }
     
     if (this.color === '#ffffff' || this.color === '#e2f5d3') {
-      // 청사과 점토: 벨벳 느낌의 보송한 점토 질감
+      // 청사과 점토: 쫀쫀하고 찰진 수분감 있는 점토 질감 (매트한 베이스 위에 미세한 물광 clearcoat 가산)
       this.material = new THREE.MeshPhysicalMaterial({
         color: this.color,
-        roughness: 0.8,
+        roughness: 0.58, // satin 느낌의 부드러운 반사광
         metalness: 0.0,
         sheen: new THREE.Color(0xffffff),
-        sheenRoughness: 0.5,
+        sheenRoughness: 0.35,
+        clearcoat: 0.16, // 미세한 수분/점성 텍스처
+        clearcoatRoughness: 0.45,
         transparent: true,
         opacity: 1.0
       });
@@ -584,12 +586,12 @@ class SoftBody3D {
     }
 
     const index = this.geometry.index;
-    const addSpring = (i1, i2) => {
+    const addSpring = (i1, i2, isCross = false) => {
       if (this.springs.some(s => (s.i1 === i1 && s.i2 === i2) || (s.i1 === i2 && s.i2 === i1))) return;
       const p1 = this.particles[i1];
       const p2 = this.particles[i2];
       const restLength = p1.originalPos.distanceTo(p2.originalPos);
-      this.springs.push({ i1, i2, restLength });
+      this.springs.push({ i1, i2, restLength, originalRestLength: restLength, isCross });
     };
 
     if (index) {
@@ -613,7 +615,7 @@ class SoftBody3D {
       for (let j = i + 1; j < this.particles.length; j++) {
         const dist = this.particles[i].originalPos.distanceTo(this.particles[j].originalPos);
         if (dist > r * 1.5) {
-          this.springs.push({ i1: i, i2: j, restLength: dist * 0.95, isCross: true });
+          addSpring(i, j, true);
         }
       }
     }
@@ -745,9 +747,20 @@ class SoftBody3D {
       const d = p2.pos.clone().sub(p1.pos);
       const dist = d.length();
       if (dist > 0.01) {
+        // 1. 소성 변형 (Plastic Yielding): 쫀득하게 한계 이상 늘어난 부분의 휴지 길이를 변경 (치즈/점토 효과)
         const diff = dist - s.restLength;
-        const k = s.isCross ? 0.03 : this.kEdge;
-        const f = d.normalize().multiplyScalar(diff * k);
+        const strain = diff / s.restLength;
+        
+        // 당겨질 때 극적인 쫀득함을 구현하기 위해 소성 변형율 45% 적용
+        if (Math.abs(strain) > 0.03) {
+          s.restLength += diff * 0.45;
+        }
+
+        // 2. 극도로 느린 점성 복원 (Very Slow Viscous Recovery)
+        s.restLength += (s.originalRestLength - s.restLength) * 0.018;
+
+        const k = s.isCross ? 0.015 : this.kEdge;
+        const f = d.normalize().multiplyScalar((dist - s.restLength) * k);
         p1.force.add(f);
         p2.force.sub(f);
       }
