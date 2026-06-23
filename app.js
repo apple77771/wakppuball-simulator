@@ -121,7 +121,7 @@ class AudioSynth {
     source.playbackRate.setValueAtTime(pitch, now);
 
     const gainNode = this.ctx.createGain();
-    gainNode.gain.setValueAtTime(volume, now);
+    gainNode.gain.setValueAtTime(volume * 2.0, now);
 
     source.connect(gainNode);
     if (panner) {
@@ -231,7 +231,7 @@ class AudioSynth {
     osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
 
     const gainNode = this.ctx.createGain();
-    gainNode.gain.setValueAtTime(0.45, now);
+    gainNode.gain.setValueAtTime(0.9, now);
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
 
     osc.connect(gainNode);
@@ -257,7 +257,7 @@ class AudioSynth {
     osc.frequency.exponentialRampToValueAtTime(350, now + 0.025);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.setValueAtTime(0.24, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
 
     osc.connect(gain);
@@ -288,7 +288,7 @@ class AudioSynth {
     filter.frequency.setValueAtTime(140, now);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.65 * intensity, now);
+    gain.gain.setValueAtTime(1.3 * intensity, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 
     osc.connect(filter);
@@ -315,7 +315,7 @@ class AudioSynth {
     slapFilter.Q.setValueAtTime(2, now);
 
     const slapGain = this.ctx.createGain();
-    slapGain.gain.setValueAtTime(0.4 * intensity, now);
+    slapGain.gain.setValueAtTime(0.8 * intensity, now);
     slapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
 
     slapSource.connect(slapFilter);
