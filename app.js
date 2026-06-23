@@ -942,13 +942,13 @@ class GreenAppleBall {
       const stretch = 1.0 + (this.pressure * 0.06);
       this.group.scale.set(stretch, squash, stretch);
 
-      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생
-      let shouldPlayCrunch = pointer.justPressed;
+      // 즉각적인 소리 피드백: 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생 (첫 터치는 handleStart에서 처리)
+      let shouldPlayCrunch = false;
       if (this.pressure - this.lastPlayedPressure > 0.08) {
         shouldPlayCrunch = true;
         this.lastPlayedPressure = this.pressure;
       }
-      if (Math.random() < 0.12) {
+      if (!pointer.justPressed && Math.random() < 0.12) {
         shouldPlayCrunch = true;
       }
 
@@ -1152,8 +1152,8 @@ class ButterStickBall {
         const stretch = 1.0 + (this.pressure * 0.06);
         this.group.scale.set(stretch, squash, stretch);
 
-        // 터치 즉시 혹은 압력 8% 증가 시마다 소리 트리거
-        if (pointer.justPressed || (this.pressure - this.lastPlayedPressure > 0.08)) {
+        // 압력 8% 증가 시마다 소리 트리거 (첫 터치는 handleStart에서 처리)
+        if (!pointer.justPressed && (this.pressure - this.lastPlayedPressure > 0.08)) {
           peeledSomething = true;
           this.lastPlayedPressure = this.pressure;
         }
@@ -1161,7 +1161,7 @@ class ButterStickBall {
         const targetData = this.flakes.find(f => f.mesh === hitFlake);
         if (targetData) {
           const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-          if (pointer.justPressed || Math.random() < 0.4 || speed > 1.2) {
+          if (!pointer.justPressed && (Math.random() < 0.4 || speed > 1.2)) {
             targetData.health -= 1;
             peeledSomething = true;
 
@@ -1422,13 +1422,13 @@ class MiniBalloonBall {
         }
       });
 
-      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생
-      let shouldPlayCrunch = pointer.justPressed;
+      // 즉각적인 소리 피드백: 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생 (첫 터치는 handleStart에서 처리)
+      let shouldPlayCrunch = false;
       if (this.pressure - this.lastPlayedPressure > 0.08) {
         shouldPlayCrunch = true;
         this.lastPlayedPressure = this.pressure;
       }
-      if (Math.random() < 0.12) {
+      if (!pointer.justPressed && Math.random() < 0.12) {
         shouldPlayCrunch = true;
       }
 
@@ -1716,13 +1716,13 @@ class ChocoBananaBall {
       const stretch = 1.0 + (this.pressure * 0.06);
       this.group.scale.set(stretch, squash, stretch);
 
-      // 즉각적인 소리 피드백: 첫 터치 시 100% 재생, 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생
-      let shouldPlayCrunch = pointer.justPressed;
+      // 즉각적인 소리 피드백: 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생 (첫 터치는 handleStart에서 처리)
+      let shouldPlayCrunch = false;
       if (this.pressure - this.lastPlayedPressure > 0.08) {
         shouldPlayCrunch = true;
         this.lastPlayedPressure = this.pressure;
       }
-      if (Math.random() < 0.12) {
+      if (!pointer.justPressed && Math.random() < 0.12) {
         shouldPlayCrunch = true;
       }
 
@@ -1987,6 +1987,79 @@ class App3D {
 
       if (intersects.length > 0) {
         this.isOrbiting = false;
+
+        // --- 터치 즉시 소리 재생 및 햅틱/파편 피드백 (브라우저 오디오 컨텍스트 락 해제용 동기 실행) ---
+        if (this.ball && this.ball.stage < 2) {
+          let hitPt = null;
+          let hitFlake = null;
+          
+          if (this.activeSkin === 'butter-stick') {
+            const flakeIntersects = this.raycaster.intersectObjects(this.ball.flakes.filter(f => f.alive).map(f => f.mesh));
+            if (flakeIntersects.length > 0) {
+              hitPt = flakeIntersects[0].point;
+              hitFlake = flakeIntersects[0].object;
+            }
+          } else {
+            let targetMesh = null;
+            if (this.activeSkin === 'green-apple') targetMesh = this.ball.shellMesh;
+            else if (this.activeSkin === 'choco-banana') targetMesh = this.ball.chocoMesh;
+            else if (this.activeSkin === 'mini-balloon') targetMesh = this.ball.balloonMesh;
+            
+            if (targetMesh) {
+              const shellIntersects = this.raycaster.intersectObject(targetMesh);
+              if (shellIntersects.length > 0) {
+                hitPt = shellIntersects[0].point;
+              }
+            }
+          }
+          
+          if (hitPt) {
+            audio.resume();
+            
+            if (this.activeSkin === 'green-apple') {
+              const pitch = this.isFrozen ? 1.2 : 1.0;
+              audio.playCrunch('apple', pitch, hitPt);
+              if (this.hapticEnabled && navigator.vibrate) navigator.vibrate(this.isFrozen ? 12 : 8);
+              this.particles.push(new Particle3D(this.scene, hitPt, '#76ff03', (0.04 + Math.random()*0.05)*(this.isFrozen ? 0.65 : 1.0)));
+            } else if (this.activeSkin === 'butter-stick' && hitFlake) {
+              const pitch = this.isFrozen ? 0.85 : 0.7;
+              audio.playCrunch('butter', pitch, hitPt);
+              if (this.hapticEnabled && navigator.vibrate) navigator.vibrate(this.isFrozen ? 10 : 7);
+              
+              const targetData = this.ball.flakes.find(f => f.mesh === hitFlake);
+              if (targetData) {
+                targetData.health -= 1;
+                const shardSize = (0.025 + Math.random()*0.02) * (this.isFrozen ? 0.7 : 1.0);
+                this.particles.push(new Particle3D(this.scene, hitPt, '#ffffff', shardSize, 'flake'));
+                if (targetData.health <= 0) {
+                  targetData.alive = false;
+                  this.ball.group.remove(hitFlake);
+                  const burstCount = this.isFrozen ? 6 : 3;
+                  for (let i = 0; i < burstCount; i++) {
+                    const flakeSize = (0.04 + Math.random()*0.04) * (this.isFrozen ? 0.7 : 1.0);
+                    this.particles.push(new Particle3D(this.scene, hitPt, '#ffffff', flakeSize, 'flake'));
+                  }
+                } else {
+                  hitFlake.material.color.setHex(0xdddddd);
+                  hitFlake.position.z += (Math.random() - 0.5) * 0.015;
+                }
+              }
+            } else if (this.activeSkin === 'mini-balloon') {
+              const pitch = this.isFrozen ? 1.6 : 1.35;
+              audio.playCrunch('balloon', pitch, hitPt);
+              if (this.hapticEnabled && navigator.vibrate) navigator.vibrate(this.isFrozen ? 8 : 5);
+            } else if (this.activeSkin === 'choco-banana') {
+              const pitch = this.isFrozen ? 0.75 : 0.62;
+              audio.playCrunch('choco', pitch, hitPt);
+              if (this.hapticEnabled && navigator.vibrate) navigator.vibrate(this.isFrozen ? 9 : 6);
+              this.particles.push(new Particle3D(this.scene, hitPt, '#4e342e', (0.04 + Math.random()*0.05)*(this.isFrozen ? 0.65 : 1.0)));
+            }
+            
+            // 첫 프레임에서 이중 재생 방지를 위해 justPressed를 false로 설정하여 Ball.update 내의 pointer.justPressed 재생 차단
+            this.pointer.justPressed = false;
+            this.ball.lastPlayedPressure = this.ball.pressure;
+          }
+        }
       } else {
         this.isOrbiting = true;
       }
