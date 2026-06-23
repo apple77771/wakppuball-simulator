@@ -467,3 +467,99 @@ html, body {
     font-size: 0.65rem;
   }
 }
+
+/* ==========================================
+   7. 클레이 늘이기 인터페이스 핸들 스타일
+   ========================================== */
+.handles-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.handles-overlay.hidden {
+  display: none;
+}
+
+.clay-handle {
+  position: absolute;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.72);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25), inset 0 0 8px rgba(255, 255, 255, 0.8);
+  cursor: grab;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  z-index: 6;
+  opacity: 0;
+}
+
+#handle-left {
+  left: 12%;
+  transform: translate(-50%, -50%);
+  animation: handleLeftFadeIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+#handle-right {
+  right: 12%;
+  transform: translate(50%, -50%);
+  animation: handleRightFadeIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.clay-handle:active {
+  cursor: grabbing;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 20px rgba(0, 240, 255, 0.35), inset 0 0 10px rgba(255, 255, 255, 1.0);
+  border-color: #00f0ff;
+}
+
+.handle-inner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.12);
+  transition: all 0.2s ease;
+}
+
+.clay-handle:active .handle-inner {
+  background: #00f0ff;
+  transform: scale(1.2);
+  box-shadow: 0 0 8px #00f0ff;
+}
+
+.clay-handle.returning {
+  transition: transform 0.38s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.3s ease;
+}
+
+@keyframes handleLeftFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-150%, -50%) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes handleRightFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(150%, -50%) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translate(50%, -50%) scale(1);
+  }
+}
+

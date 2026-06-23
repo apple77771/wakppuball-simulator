@@ -386,6 +386,8 @@ class Particle3D {
       geo = new THREE.BoxGeometry(size * 1.6, size * 0.8, size * 0.4);
     } else if (type === 'star') {
       geo = new THREE.ConeGeometry(size, size * 1.5, 4);
+    } else if (type === 'bead-shard') {
+      geo = new THREE.SphereGeometry(size, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
     } else if (type === 'flake') {
       // 버터 껍데기용 고화질 불규칙 입체 파편
       geo = createIrregularShardGeometry(size * 1.3, 0.12);
@@ -399,6 +401,8 @@ class Particle3D {
       mat = new THREE.MeshStandardMaterial({ color: 0xf87171, roughness: 0.3 }); 
     } else if (type === 'star') {
       mat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.1, metalness: 0.8 }); 
+    } else if (type === 'bead-shard') {
+      mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.15, metalness: 0.0, side: THREE.DoubleSide });
     } else {
       mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.4, metalness: 0.1 });
     }
@@ -499,6 +503,13 @@ class SoftBody3D {
 
     this.draggedParticleIdx = -1;
 
+    this.leftDragActive = false;
+    this.leftDragOffset = new THREE.Vector3();
+    this.rightDragActive = false;
+    this.rightDragOffset = new THREE.Vector3();
+    this.leftAnchorIdx = 0;
+    this.rightAnchorIdx = 0;
+
     this.meltShards = false;
     this.baseColor = color;
     this.targetColor = color;
@@ -585,6 +596,20 @@ class SoftBody3D {
       this.particles.push(new SoftBodyParticle3D(px, py, pz));
     }
 
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < this.particles.length; i++) {
+      const px = this.particles[i].originalPos.x;
+      if (px < minX) {
+        minX = px;
+        this.leftAnchorIdx = i;
+      }
+      if (px > maxX) {
+        maxX = px;
+        this.rightAnchorIdx = i;
+      }
+    }
+
     const index = this.geometry.index;
     const addSpring = (i1, i2, isCross = false) => {
       if (this.springs.some(s => (s.i1 === i1 && s.i2 === i2) || (s.i1 === i2 && s.i2 === i1))) return;
@@ -632,6 +657,8 @@ class SoftBody3D {
         geo = new THREE.BoxGeometry(size * 1.5, size * 0.8, size * 0.3);
       } else if (toppingType === 'star') {
         geo = new THREE.ConeGeometry(size, size * 1.4, 4);
+      } else if (toppingType === 'bead-shard') {
+        geo = new THREE.SphereGeometry(size, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
       } else if (toppingType === 'flake') {
         geo = createIrregularShardGeometry(size * 1.2, 0.12);
       } else {
@@ -645,6 +672,8 @@ class SoftBody3D {
         mat = new THREE.MeshStandardMaterial({ color: 0xf87171, roughness: 0.3 }); 
       } else if (toppingType === 'star') {
         mat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.1, metalness: 0.8 }); 
+      } else if (toppingType === 'bead-shard') {
+        mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.1, metalness: 0.0, side: THREE.DoubleSide });
       } else if (toppingType === 'flake') {
         mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
       } else {
@@ -784,6 +813,38 @@ class SoftBody3D {
       if (p.pos.z > 2.0)  { p.pos.z = 2.0;  p.vel.z = 0; }
     }
 
+    // 1단계: 복원 오프셋 감쇠 보간
+    if (!this.leftDragActive && this.leftDragOffset.lengthSq() > 0.0) {
+      this.leftDragOffset.lerp(new THREE.Vector3(), 0.12);
+      if (this.leftDragOffset.lengthSq() < 0.0001) this.leftDragOffset.set(0, 0, 0);
+    }
+    if (!this.rightDragActive && this.rightDragOffset.lengthSq() > 0.0) {
+      this.rightDragOffset.lerp(new THREE.Vector3(), 0.12);
+      if (this.rightDragOffset.lengthSq() < 0.0001) this.rightDragOffset.set(0, 0, 0);
+    }
+
+    // 2단계: 왼쪽 핸들 당기기 변형 적용
+    if (this.leftDragActive || this.leftDragOffset.lengthSq() > 0.0) {
+      const anchorOriginalPos = this.particles[this.leftAnchorIdx].originalPos;
+      this.particles.forEach(p => {
+        const dist = p.originalPos.distanceTo(anchorOriginalPos);
+        const weight = Math.exp(-dist * 1.25);
+        p.pos.copy(p.originalPos).addScaledVector(this.leftDragOffset, weight);
+        p.vel.set(0, 0, 0);
+      });
+    }
+
+    // 3단계: 오른쪽 핸들 당기기 변형 적용
+    if (this.rightDragActive || this.rightDragOffset.lengthSq() > 0.0) {
+      const anchorOriginalPos = this.particles[this.rightAnchorIdx].originalPos;
+      this.particles.forEach(p => {
+        const dist = p.originalPos.distanceTo(anchorOriginalPos);
+        const weight = Math.exp(-dist * 1.25);
+        p.pos.copy(p.originalPos).addScaledVector(this.rightDragOffset, weight);
+        p.vel.set(0, 0, 0);
+      });
+    }
+
     const posAttr = this.geometry.attributes.position;
     for (let i = 0; i < points; i++) {
       posAttr.setXYZ(i, this.particles[i].pos.x, this.particles[i].pos.y, this.particles[i].pos.z);
@@ -830,8 +891,8 @@ class GreenAppleBall {
     this.deformX = 0;
     this.deformY = 0;
     
-    this.hasGeneratedCracks = false;
-    this.crackBranches = [];
+    this.crackCenters = [];
+    this.lastLocalHitPt = null;
     this.lastPlayedPressure = 0.0;
     this.softBody = null;
     this.initMeshes();
@@ -896,9 +957,9 @@ class GreenAppleBall {
     this.scene.add(this.group);
   }
 
-  generateCracks(localHitPoint) {
-    this.crackGroup.clear();
-    this.crackBranches = [];
+  spawnCrackCenter(localHitPoint, localNormal, localDragDir) {
+    const centerGroup = new THREE.Group();
+    this.crackGroup.add(centerGroup);
 
     const crackMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
@@ -907,29 +968,34 @@ class GreenAppleBall {
       opacity: 0.95
     });
 
-    const numBranches = 8;
-    const normal = localHitPoint.clone().normalize();
-    let tangent = new THREE.Vector3(0, 1, 0).cross(normal);
+    const numBranches = 6;
+    let tangent = new THREE.Vector3(0, 1, 0).cross(localNormal);
     if (tangent.lengthSq() < 0.01) {
-      tangent = new THREE.Vector3(1, 0, 0).cross(normal);
+      tangent = new THREE.Vector3(1, 0, 0).cross(localNormal);
     }
     tangent.normalize();
-    const binormal = normal.clone().cross(tangent).normalize();
+    const binormal = localNormal.clone().cross(tangent).normalize();
+
+    const branches = [];
 
     for (let i = 0; i < numBranches; i++) {
       const angle = (i / numBranches) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
-      const dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
+      let dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
       
+      if (localDragDir) {
+        dir.lerp(localDragDir, 0.65).normalize();
+      }
+
       const points = [];
       let currentPt = localHitPoint.clone().normalize().multiplyScalar(this.r + 0.015);
       points.push(currentPt.clone());
 
-      const numSteps = 15;
-      const stepSize = (this.r * Math.PI * 0.75) / numSteps;
+      const numSteps = 12;
+      const stepSize = (this.r * Math.PI * 0.6) / numSteps;
 
       for (let step = 1; step <= numSteps; step++) {
         const nextPt = currentPt.clone().addScaledVector(dir, stepSize);
-        const jitterDir = normal.clone().cross(dir).normalize();
+        const jitterDir = localNormal.clone().cross(dir).normalize();
         nextPt.addScaledVector(jitterDir, (Math.random() - 0.5) * stepSize * 0.4);
         nextPt.normalize().multiplyScalar(this.r + 0.015);
         
@@ -940,12 +1006,20 @@ class GreenAppleBall {
 
       const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
       const crackLine = new THREE.Line(crackGeo, crackMat);
-      this.crackGroup.add(crackLine);
-      this.crackBranches.push({
+      crackLine.geometry.setDrawRange(0, 0); // 시작 시 완전 숨김
+      centerGroup.add(crackLine);
+      branches.push({
         line: crackLine,
         points: points
       });
     }
+
+    this.crackCenters.push({
+      position: localHitPoint.clone(),
+      group: centerGroup,
+      branches: branches,
+      progress: 0.0
+    });
   }
 
   update(pointer, raycaster, targetPos, particles, isFrozen = false) {
@@ -965,33 +1039,48 @@ class GreenAppleBall {
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
       this.pressure += (0.002 + dragSpeed * 0.0004) * (isFrozen ? 1.55 : 1.0);
       
-      // 클릭 즉시 방사형 크랙 생성
-      if (!this.hasGeneratedCracks) {
-        const localHit = this.shellMesh.worldToLocal(hitPt.clone());
-        this.generateCracks(localHit);
-        this.hasGeneratedCracks = true;
+      const localHit = this.shellMesh.worldToLocal(hitPt.clone());
+      const localNormal = localHit.clone().normalize();
+
+      // 드래그 방향 계산 및 평면 투사
+      let localDragDir = null;
+      if (this.lastLocalHitPt) {
+        localDragDir = localHit.clone().sub(this.lastLocalHitPt);
+        if (localDragDir.lengthSq() > 0.0001) {
+          localDragDir.projectOnPlane(localNormal).normalize();
+        } else {
+          localDragDir = null;
+        }
       }
 
-      if (this.pressure > 0.05) {
+      // 신규 균열 중심 생성 검증
+      let shouldSpawn = false;
+      if (this.crackCenters.length === 0) {
+        shouldSpawn = true;
         this.stage = 1;
         this.crackGroup.visible = true;
-        this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
-        
-        // 크랙 방사형 번짐 애니메이션
-        const propFactor = Math.max(0, Math.min(1.0, (this.pressure - 0.05) / 0.85));
-        this.crackBranches.forEach(branch => {
-          const totalPoints = branch.points.length;
-          const drawCount = Math.floor(propFactor * totalPoints);
-          branch.line.geometry.setDrawRange(0, drawCount);
-        });
+      } else {
+        const minDist = Math.min(...this.crackCenters.map(c => c.position.distanceTo(localHit)));
+        if (minDist > 0.48 && this.crackCenters.length < 6) {
+          shouldSpawn = true;
+        }
       }
+
+      if (shouldSpawn) {
+        this.spawnCrackCenter(localHit, localNormal, localDragDir);
+      }
+
+      this.lastLocalHitPt = localHit.clone();
+
+      // 균열 그룹 스케일 업데이트
+      this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
 
       // 압력에 따른 Y축 짓눌림 및 X/Z축 팽창 스케일링
       const squash = 1.0 - (this.pressure * 0.16);
       const stretch = 1.0 + (this.pressure * 0.06);
       this.group.scale.set(stretch, squash, stretch);
 
-      // 즉각적인 소리 피드백: 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생 (첫 터치는 handleStart에서 처리)
+      // 즉각적인 소리 피드백
       let shouldPlayCrunch = false;
       if (this.pressure - this.lastPlayedPressure > 0.08) {
         shouldPlayCrunch = true;
@@ -1015,13 +1104,27 @@ class GreenAppleBall {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
-      this.lastPlayedPressure = this.pressure; // 릴리즈 시 다음 터치 즉시 소리 유도
+      this.lastPlayedPressure = this.pressure; 
+      this.lastLocalHitPt = null;
 
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
       this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
       this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
+
+    // 모든 활성 균열 중심의 전파 애니메이션
+    this.crackCenters.forEach(center => {
+      if (center.progress < 1.0) {
+        center.progress += 0.08;
+        if (center.progress > 1.0) center.progress = 1.0;
+        center.branches.forEach(branch => {
+          const totalPoints = branch.points.length;
+          const drawCount = Math.floor(center.progress * totalPoints);
+          branch.line.geometry.setDrawRange(0, drawCount);
+        });
+      }
+    });
   }
 
   explode(particles, isFrozen = false) {
@@ -1065,6 +1168,15 @@ class GreenAppleBall {
       }
     }
 
+    // 균열선 리소스 해제
+    this.crackCenters.forEach(c => {
+      c.branches.forEach(b => {
+        b.line.geometry.dispose();
+        b.line.material.dispose();
+      });
+    });
+    this.crackGroup.clear();
+
     this.scene.remove(this.group);
     
     this.softBody = new SoftBody3D(this.scene, 'sphere', this.r * 1.05, '#ffffff', ['#76ff03', '#ccff90'], 16, ['normal', 'apple', 'star']);
@@ -1083,10 +1195,13 @@ class GreenAppleBall {
         d.geometry.dispose();
         d.material.dispose();
       });
-      this.crackGroup.children.forEach(c => {
-        c.geometry.dispose();
-        c.material.dispose();
+      this.crackCenters.forEach(c => {
+        c.branches.forEach(b => {
+          b.line.geometry.dispose();
+          b.line.material.dispose();
+        });
       });
+      this.crackGroup.clear();
     }
   }
 }
@@ -1107,8 +1222,8 @@ class ButterStickBall {
     this.deformY = 0;
     this.lastPlayedPressure = 0.0;
     this.softBody = null;
-    this.hasGeneratedCracks = false;
-    this.crackBranches = [];
+    this.crackCenters = [];
+    this.lastLocalHitPt = null;
     this.initMeshes();
   }
 
@@ -1156,19 +1271,26 @@ class ButterStickBall {
 
   projectToBox(point, w, h, d, faceNormal) {
     const projected = point.clone();
+    const margin = 0.015;
     if (Math.abs(faceNormal.x) > 0.9) {
-      projected.x = Math.sign(faceNormal.x) * (w / 2 + 0.015);
+      projected.x = Math.sign(faceNormal.x) * (w / 2 + margin);
+      projected.y = Math.max(-h / 2, Math.min(h / 2, projected.y));
+      projected.z = Math.max(-d / 2, Math.min(d / 2, projected.z));
     } else if (Math.abs(faceNormal.y) > 0.9) {
-      projected.y = Math.sign(faceNormal.y) * (h / 2 + 0.015);
+      projected.y = Math.sign(faceNormal.y) * (h / 2 + margin);
+      projected.x = Math.max(-w / 2, Math.min(w / 2, projected.x));
+      projected.z = Math.max(-d / 2, Math.min(d / 2, projected.z));
     } else if (Math.abs(faceNormal.z) > 0.9) {
-      projected.z = Math.sign(faceNormal.z) * (d / 2 + 0.015);
+      projected.z = Math.sign(faceNormal.z) * (d / 2 + margin);
+      projected.x = Math.max(-w / 2, Math.min(w / 2, projected.x));
+      projected.y = Math.max(-h / 2, Math.min(h / 2, projected.y));
     }
     return projected;
   }
 
-  generateCracks(localHitPoint, localNormal) {
-    this.crackGroup.clear();
-    this.crackBranches = [];
+  spawnCrackCenter(localHitPoint, localNormal, localDragDir) {
+    const centerGroup = new THREE.Group();
+    this.crackGroup.add(centerGroup);
 
     const crackMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
@@ -1177,7 +1299,7 @@ class ButterStickBall {
       opacity: 0.95
     });
 
-    const numBranches = 8;
+    const numBranches = 6;
     let tangent = new THREE.Vector3(0, 1, 0).cross(localNormal);
     if (tangent.lengthSq() < 0.01) {
       tangent = new THREE.Vector3(1, 0, 0).cross(localNormal);
@@ -1185,36 +1307,63 @@ class ButterStickBall {
     tangent.normalize();
     const binormal = localNormal.clone().cross(tangent).normalize();
 
+    const branches = [];
+
     for (let i = 0; i < numBranches; i++) {
       const angle = (i / numBranches) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
-      const dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
+      let dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
       
+      if (localDragDir) {
+        dir.lerp(localDragDir, 0.65).normalize();
+      }
+
       const points = [];
       let currentPt = localHitPoint.clone().addScaledVector(localNormal, 0.015);
       points.push(currentPt.clone());
 
-      const numSteps = 15;
-      const stepSize = 0.15;
+      const numSteps = 12;
+      const stepSize = 0.13;
 
       for (let step = 1; step <= numSteps; step++) {
-        const nextPt = currentPt.clone().addScaledVector(dir, stepSize);
+        let nextPt = currentPt.clone().addScaledVector(dir, stepSize);
         const jitterDir = localNormal.clone().cross(dir).normalize();
         nextPt.addScaledVector(jitterDir, (Math.random() - 0.5) * stepSize * 0.4);
         
-        const projectedPt = this.projectToBox(nextPt, this.w, this.h, this.d, localNormal);
-        points.push(projectedPt);
-        currentPt = projectedPt;
-        dir.copy(projectedPt).sub(points[points.length - 2]).normalize();
+        let outOfBounds = false;
+        if (Math.abs(localNormal.x) > 0.9) {
+          if (Math.abs(nextPt.y) > this.h / 2 || Math.abs(nextPt.z) > this.d / 2) outOfBounds = true;
+        } else if (Math.abs(localNormal.y) > 0.9) {
+          if (Math.abs(nextPt.x) > this.w / 2 || Math.abs(nextPt.z) > this.d / 2) outOfBounds = true;
+        } else if (Math.abs(localNormal.z) > 0.9) {
+          if (Math.abs(nextPt.x) > this.w / 2 || Math.abs(nextPt.y) > this.h / 2) outOfBounds = true;
+        }
+
+        nextPt = this.projectToBox(nextPt, this.w, this.h, this.d, localNormal);
+        points.push(nextPt);
+        
+        if (outOfBounds) {
+          break;
+        }
+        currentPt = nextPt;
+        dir.copy(nextPt).sub(points[points.length - 2]).normalize();
       }
 
       const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
       const crackLine = new THREE.Line(crackGeo, crackMat);
-      this.crackGroup.add(crackLine);
-      this.crackBranches.push({
+      crackLine.geometry.setDrawRange(0, 0); // 시작 시 숨김
+      centerGroup.add(crackLine);
+      branches.push({
         line: crackLine,
         points: points
       });
     }
+
+    this.crackCenters.push({
+      position: localHitPoint.clone(),
+      group: centerGroup,
+      branches: branches,
+      progress: 0.0
+    });
   }
 
   update(pointer, raycaster, targetPos, particles, isFrozen = false) {
@@ -1239,27 +1388,41 @@ class ButterStickBall {
       const stretch = 1.0 + (this.pressure * 0.06);
       this.group.scale.set(stretch, squash, stretch);
 
-      // 클릭 즉시 방사형 크랙 생성
-      if (!this.hasGeneratedCracks) {
-        const localHit = this.shellMesh.worldToLocal(hitPt.clone());
-        const localNormal = intersects[0].face.normal.clone();
-        this.generateCracks(localHit, localNormal);
-        this.hasGeneratedCracks = true;
+      const localHit = this.shellMesh.worldToLocal(hitPt.clone());
+      const localNormal = intersects[0].face.normal.clone();
+
+      // 드래그 방향 계산 및 평면 투사
+      let localDragDir = null;
+      if (this.lastLocalHitPt) {
+        localDragDir = localHit.clone().sub(this.lastLocalHitPt);
+        if (localDragDir.lengthSq() > 0.0001) {
+          localDragDir.projectOnPlane(localNormal).normalize();
+        } else {
+          localDragDir = null;
+        }
       }
 
-      if (this.pressure > 0.05) {
+      // 신규 균열 중심 생성 검증
+      let shouldSpawn = false;
+      if (this.crackCenters.length === 0) {
+        shouldSpawn = true;
         this.stage = 1;
         this.crackGroup.visible = true;
-        this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
-        
-        // 크랙 방사형 번짐 애니메이션
-        const propFactor = Math.max(0, Math.min(1.0, (this.pressure - 0.05) / 0.85));
-        this.crackBranches.forEach(branch => {
-          const totalPoints = branch.points.length;
-          const drawCount = Math.floor(propFactor * totalPoints);
-          branch.line.geometry.setDrawRange(0, drawCount);
-        });
+      } else {
+        const minDist = Math.min(...this.crackCenters.map(c => c.position.distanceTo(localHit)));
+        if (minDist > 0.48 && this.crackCenters.length < 6) {
+          shouldSpawn = true;
+        }
       }
+
+      if (shouldSpawn) {
+        this.spawnCrackCenter(localHit, localNormal, localDragDir);
+      }
+
+      this.lastLocalHitPt = localHit.clone();
+
+      // 균열 스케일 업데이트
+      this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
 
       // 압력 증가에 따라 주기적 바삭함 재생 및 동기/무작위 재생
       let shouldPlayCrunch = false;
@@ -1287,11 +1450,26 @@ class ButterStickBall {
       this.pressure *= 0.85; // 압력 서서히 해제
       this.lastPlayedPressure = this.pressure;
       this.group.position.set(0, 0, 0);
+      this.lastLocalHitPt = null;
+
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
       this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
       this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
+
+    // 균열 중심 전파 애니메이션
+    this.crackCenters.forEach(center => {
+      if (center.progress < 1.0) {
+        center.progress += 0.08;
+        if (center.progress > 1.0) center.progress = 1.0;
+        center.branches.forEach(branch => {
+          const totalPoints = branch.points.length;
+          const drawCount = Math.floor(center.progress * totalPoints);
+          branch.line.geometry.setDrawRange(0, drawCount);
+        });
+      }
+    });
   }
 
   explode(particles, isFrozen = false) {
@@ -1322,6 +1500,15 @@ class ButterStickBall {
       particles.push(new Particle3D(this.scene, partPos, '#ffffff', flakeSize, 'flake', launchVel));
     }
 
+    // 균열선 해제
+    this.crackCenters.forEach(c => {
+      c.branches.forEach(b => {
+        b.line.geometry.dispose();
+        b.line.material.dispose();
+      });
+    });
+    this.crackGroup.clear();
+
     this.scene.remove(this.group);
     this.softBody = new SoftBody3D(this.scene, 'box', 0.8, '#ffe082', '#ffffff', 18, ['flake']);
   }
@@ -1335,10 +1522,13 @@ class ButterStickBall {
       this.shellMesh.material.dispose();
       this.butterMesh.geometry.dispose();
       this.butterMesh.material.dispose();
-      this.crackGroup.children.forEach(c => {
-        c.geometry.dispose();
-        c.material.dispose();
+      this.crackCenters.forEach(c => {
+        c.branches.forEach(b => {
+          b.line.geometry.dispose();
+          b.line.material.dispose();
+        });
       });
+      this.crackGroup.clear();
     }
   }
 }
@@ -1374,8 +1564,8 @@ class MiniBalloonBall {
     this.deformY = 0;
     this.lastPlayedPressure = 0.0;
     this.softBody = null;
-    this.hasGeneratedCracks = false;
-    this.crackBranches = [];
+    this.crackCenters = [];
+    this.lastLocalHitPt = null;
 
     this.beadData = [
       new MiniWaxBead3D(new THREE.Vector3(-0.4, 0.3, 0.1), 0.35, '#f06292'),
@@ -1430,9 +1620,9 @@ class MiniBalloonBall {
     this.scene.add(this.group);
   }
 
-  generateCracks(localHitPoint) {
-    this.crackGroup.clear();
-    this.crackBranches = [];
+  spawnCrackCenter(localHitPoint, localNormal, localDragDir) {
+    const centerGroup = new THREE.Group();
+    this.crackGroup.add(centerGroup);
 
     const crackMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
@@ -1441,29 +1631,34 @@ class MiniBalloonBall {
       opacity: 0.8
     });
 
-    const numBranches = 8;
-    const normal = localHitPoint.clone().normalize();
-    let tangent = new THREE.Vector3(0, 1, 0).cross(normal);
+    const numBranches = 6;
+    let tangent = new THREE.Vector3(0, 1, 0).cross(localNormal);
     if (tangent.lengthSq() < 0.01) {
-      tangent = new THREE.Vector3(1, 0, 0).cross(normal);
+      tangent = new THREE.Vector3(1, 0, 0).cross(localNormal);
     }
     tangent.normalize();
-    const binormal = normal.clone().cross(tangent).normalize();
+    const binormal = localNormal.clone().cross(tangent).normalize();
+
+    const branches = [];
 
     for (let i = 0; i < numBranches; i++) {
       const angle = (i / numBranches) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
-      const dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
+      let dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
       
+      if (localDragDir) {
+        dir.lerp(localDragDir, 0.65).normalize();
+      }
+
       const points = [];
       let currentPt = localHitPoint.clone().normalize().multiplyScalar(this.r + 0.015);
       points.push(currentPt.clone());
 
-      const numSteps = 15;
-      const stepSize = (this.r * Math.PI * 0.75) / numSteps;
+      const numSteps = 12;
+      const stepSize = (this.r * Math.PI * 0.6) / numSteps;
 
       for (let step = 1; step <= numSteps; step++) {
         const nextPt = currentPt.clone().addScaledVector(dir, stepSize);
-        const jitterDir = normal.clone().cross(dir).normalize();
+        const jitterDir = localNormal.clone().cross(dir).normalize();
         nextPt.addScaledVector(jitterDir, (Math.random() - 0.5) * stepSize * 0.4);
         nextPt.normalize().multiplyScalar(this.r + 0.015);
         
@@ -1474,12 +1669,20 @@ class MiniBalloonBall {
 
       const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
       const crackLine = new THREE.Line(crackGeo, crackMat);
-      this.crackGroup.add(crackLine);
-      this.crackBranches.push({
+      crackLine.geometry.setDrawRange(0, 0);
+      centerGroup.add(crackLine);
+      branches.push({
         line: crackLine,
         points: points
       });
     }
+
+    this.crackCenters.push({
+      position: localHitPoint.clone(),
+      group: centerGroup,
+      branches: branches,
+      progress: 0.0
+    });
   }
 
   update(pointer, raycaster, targetPos, particles, isFrozen = false) {
@@ -1573,28 +1776,43 @@ class MiniBalloonBall {
         }
       });
 
-      // 클릭 즉시 방사형 크랙 생성
-      if (!this.hasGeneratedCracks) {
-        const localHit = this.balloonMesh.worldToLocal(hitPt.clone());
-        this.generateCracks(localHit);
-        this.hasGeneratedCracks = true;
+      const localHit = this.balloonMesh.worldToLocal(hitPt.clone());
+      const localNormal = localHit.clone().normalize();
+
+      // 드래그 방향 계산 및 평면 투사
+      let localDragDir = null;
+      if (this.lastLocalHitPt) {
+        localDragDir = localHit.clone().sub(this.lastLocalHitPt);
+        if (localDragDir.lengthSq() > 0.0001) {
+          localDragDir.projectOnPlane(localNormal).normalize();
+        } else {
+          localDragDir = null;
+        }
       }
 
-      if (this.pressure > 0.05) {
+      // 신규 균열 중심 생성 검증
+      let shouldSpawn = false;
+      if (this.crackCenters.length === 0) {
+        shouldSpawn = true;
         this.stage = 1;
         this.crackGroup.visible = true;
-        this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
-        
-        // 크랙 방사형 번짐 애니메이션
-        const propFactor = Math.max(0, Math.min(1.0, (this.pressure - 0.05) / 0.85));
-        this.crackBranches.forEach(branch => {
-          const totalPoints = branch.points.length;
-          const drawCount = Math.floor(propFactor * totalPoints);
-          branch.line.geometry.setDrawRange(0, drawCount);
-        });
+      } else {
+        const minDist = Math.min(...this.crackCenters.map(c => c.position.distanceTo(localHit)));
+        if (minDist > 0.48 && this.crackCenters.length < 6) {
+          shouldSpawn = true;
+        }
       }
 
-      // 즉각적인 소리 피드백: 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생 (첫 터치는 handleStart에서 처리)
+      if (shouldSpawn) {
+        this.spawnCrackCenter(localHit, localNormal, localDragDir);
+      }
+
+      this.lastLocalHitPt = localHit.clone();
+
+      // 균열 스케일 업데이트
+      this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
+
+      // 즉각적인 소리 피드백
       let shouldPlayCrunch = false;
       if (this.pressure - this.lastPlayedPressure > 0.08) {
         shouldPlayCrunch = true;
@@ -1610,7 +1828,7 @@ class MiniBalloonBall {
         if (navigator.vibrate) navigator.vibrate(isFrozen ? 8 : 5);
       }
 
-      // 비드들의 순차 파열
+      // 비드들의 순차 파열 (터진 반구형 파편 비산 적용)
       const beadPartCount = isFrozen ? 22 : 12;
       const speedMult = isFrozen ? 1.55 : 1.0;
       const sizeMult = isFrozen ? 0.65 : 1.0;
@@ -1627,7 +1845,8 @@ class MiniBalloonBall {
         for (let k = 0; k < beadPartCount; k++) {
           const offset = new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3);
           const launchVel = offset.clone().normalize().multiplyScalar((3.0 + Math.random()*4.0)*speedMult);
-          particles.push(new Particle3D(this.scene, this.beads[0].data.pos.clone().add(this.group.position).add(offset), this.beads[0].data.color, (0.04 + Math.random()*0.04)*sizeMult, 'normal', launchVel));
+          // 반구형 bead-shard 입자 비산
+          particles.push(new Particle3D(this.scene, this.beads[0].data.pos.clone().add(this.group.position).add(offset), this.beads[0].data.color, (0.06 + Math.random()*0.05)*sizeMult, 'bead-shard', launchVel));
         }
       }
 
@@ -1643,7 +1862,7 @@ class MiniBalloonBall {
         for (let k = 0; k < beadPartCount; k++) {
           const offset = new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3);
           const launchVel = offset.clone().normalize().multiplyScalar((3.0 + Math.random()*4.0)*speedMult);
-          particles.push(new Particle3D(this.scene, this.beads[1].data.pos.clone().add(this.group.position).add(offset), this.beads[1].data.color, (0.04 + Math.random()*0.04)*sizeMult, 'normal', launchVel));
+          particles.push(new Particle3D(this.scene, this.beads[1].data.pos.clone().add(this.group.position).add(offset), this.beads[1].data.color, (0.06 + Math.random()*0.05)*sizeMult, 'bead-shard', launchVel));
         }
       }
 
@@ -1659,7 +1878,7 @@ class MiniBalloonBall {
         for (let k = 0; k < beadPartCount; k++) {
           const offset = new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3);
           const launchVel = offset.clone().normalize().multiplyScalar((3.0 + Math.random()*4.0)*speedMult);
-          particles.push(new Particle3D(this.scene, this.beads[2].data.pos.clone().add(this.group.position).add(offset), this.beads[2].data.color, (0.04 + Math.random()*0.04)*sizeMult, 'normal', launchVel));
+          particles.push(new Particle3D(this.scene, this.beads[2].data.pos.clone().add(this.group.position).add(offset), this.beads[2].data.color, (0.06 + Math.random()*0.05)*sizeMult, 'bead-shard', launchVel));
         }
       }
 
@@ -1671,13 +1890,27 @@ class MiniBalloonBall {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
-      this.lastPlayedPressure = this.pressure; // 릴리즈 시 다음 터치 즉시 소리 유도
+      this.lastPlayedPressure = this.pressure; 
+      this.lastLocalHitPt = null;
 
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
       this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
       this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
+
+    // 균열 진행 애니메이션 업데이트
+    this.crackCenters.forEach(center => {
+      if (center.progress < 1.0) {
+        center.progress += 0.08;
+        if (center.progress > 1.0) center.progress = 1.0;
+        center.branches.forEach(branch => {
+          const totalPoints = branch.points.length;
+          const drawCount = Math.floor(center.progress * totalPoints);
+          branch.line.geometry.setDrawRange(0, drawCount);
+        });
+      }
+    });
   }
 
   explode(particles, isFrozen = false) {
@@ -1699,7 +1932,7 @@ class MiniBalloonBall {
         const launchVel = radialDir.multiplyScalar(speed);
         launchVel.y += 2.0;
 
-        particles.push(new Particle3D(this.scene, bPos.add(pos), b.data.color, (0.05 + Math.random()*0.05)*sizeMult, 'normal', launchVel));
+        particles.push(new Particle3D(this.scene, bPos.add(pos), b.data.color, (0.05 + Math.random()*0.05)*sizeMult, 'bead-shard', launchVel));
       }
     });
 
@@ -1721,16 +1954,26 @@ class MiniBalloonBall {
       particles.push(new Particle3D(this.scene, partPos, '#ffffff', shardSize, 'normal', launchVel));
     }
 
+    // 균열선 리소스 해제
+    this.crackCenters.forEach(c => {
+      c.branches.forEach(b => {
+        b.line.geometry.dispose();
+        b.line.material.dispose();
+      });
+    });
+    this.crackGroup.clear();
+
     this.scene.remove(this.group);
 
+    // 속살 클레이에 터진 껍질 반구 조각(bead-shard) 토핑 구성
     this.softBody = new SoftBody3D(
       this.scene, 
       'sphere', 
       this.r * 0.9, 
       '#e0f7fa', 
-      ['#ff80ab', '#80deea', '#ffff8d'], 
-      18, 
-      ['normal']
+      ['#f06292', '#4dd0e1', '#fff176'], // 3색 비드 매칭 컬러
+      24, // 찰떡 표면에 다닥다닥 고착
+      ['bead-shard', 'normal'] // 터진 반구 껍데기와 플랫 파편 혼합
     );
     this.softBody.material.transparent = true;
     this.softBody.material.opacity = 0.4;
@@ -1749,10 +1992,13 @@ class MiniBalloonBall {
         b.mesh.geometry.dispose();
         b.mesh.material.dispose();
       });
-      this.crackGroup.children.forEach(c => {
-        c.geometry.dispose();
-        c.material.dispose();
+      this.crackCenters.forEach(c => {
+        c.branches.forEach(b => {
+          b.line.geometry.dispose();
+          b.line.material.dispose();
+        });
       });
+      this.crackGroup.clear();
     }
   }
 }
@@ -1771,8 +2017,8 @@ class ChocoBananaBall {
     this.deformX = 0;
     this.deformY = 0;
     
-    this.hasGeneratedCracks = false;
-    this.crackBranches = [];
+    this.crackCenters = [];
+    this.lastLocalHitPt = null;
     this.lastPlayedPressure = 0.0;
     this.softBody = null;
     this.initMeshes();
@@ -1815,9 +2061,9 @@ class ChocoBananaBall {
     this.scene.add(this.group);
   }
 
-  generateCracks(localHitPoint) {
-    this.crackGroup.clear();
-    this.crackBranches = [];
+  spawnCrackCenter(localHitPoint, localNormal, localDragDir) {
+    const centerGroup = new THREE.Group();
+    this.crackGroup.add(centerGroup);
 
     const crackMat = new THREE.LineBasicMaterial({
       color: 0xffd54f,
@@ -1826,7 +2072,7 @@ class ChocoBananaBall {
       opacity: 0.95
     });
 
-    const numBranches = 8;
+    const numBranches = 6;
     const normal = localHitPoint.clone().normalize();
     let tangent = new THREE.Vector3(0, 1, 0).cross(normal);
     if (tangent.lengthSq() < 0.01) {
@@ -1835,16 +2081,22 @@ class ChocoBananaBall {
     tangent.normalize();
     const binormal = normal.clone().cross(tangent).normalize();
 
+    const branches = [];
+
     for (let i = 0; i < numBranches; i++) {
       const angle = (i / numBranches) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
-      const dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
+      let dir = tangent.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
       
+      if (localDragDir) {
+        dir.lerp(localDragDir, 0.65).normalize();
+      }
+
       const points = [];
       let currentPt = localHitPoint.clone().normalize().multiplyScalar(this.r + 0.015);
       points.push(currentPt.clone());
 
-      const numSteps = 15;
-      const stepSize = (this.r * Math.PI * 0.75) / numSteps;
+      const numSteps = 12;
+      const stepSize = (this.r * Math.PI * 0.6) / numSteps;
 
       for (let step = 1; step <= numSteps; step++) {
         const nextPt = currentPt.clone().addScaledVector(dir, stepSize);
@@ -1859,12 +2111,20 @@ class ChocoBananaBall {
 
       const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
       const crackLine = new THREE.Line(crackGeo, crackMat);
-      this.crackGroup.add(crackLine);
-      this.crackBranches.push({
+      crackLine.geometry.setDrawRange(0, 0); // 시작 시 완전 숨김
+      centerGroup.add(crackLine);
+      branches.push({
         line: crackLine,
         points: points
       });
     }
+
+    this.crackCenters.push({
+      position: localHitPoint.clone(),
+      group: centerGroup,
+      branches: branches,
+      progress: 0.0
+    });
   }
 
   update(pointer, raycaster, targetPos, particles, isFrozen = false) {
@@ -1884,33 +2144,48 @@ class ChocoBananaBall {
       const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
       this.pressure += (0.0015 + speed * 0.0002) * (isFrozen ? 1.5 : 1.0);
 
-      // 즉각적인 방사형 크랙 생성
-      if (!this.hasGeneratedCracks) {
-        const localHit = this.chocoMesh.worldToLocal(hitPt.clone());
-        this.generateCracks(localHit);
-        this.hasGeneratedCracks = true;
+      const localHit = this.chocoMesh.worldToLocal(hitPt.clone());
+      const localNormal = localHit.clone().normalize();
+
+      // 드래그 방향 계산 및 평면 투사
+      let localDragDir = null;
+      if (this.lastLocalHitPt) {
+        localDragDir = localHit.clone().sub(this.lastLocalHitPt);
+        if (localDragDir.lengthSq() > 0.0001) {
+          localDragDir.projectOnPlane(localNormal).normalize();
+        } else {
+          localDragDir = null;
+        }
       }
 
-      if (this.pressure > 0.05) {
+      // 신규 균열 중심 생성 검증
+      let shouldSpawn = false;
+      if (this.crackCenters.length === 0) {
+        shouldSpawn = true;
         this.stage = 1;
         this.crackGroup.visible = true;
-        this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
-        
-        // 크랙 방사형 번짐 애니메이션
-        const propFactor = Math.max(0, Math.min(1.0, (this.pressure - 0.05) / 0.85));
-        this.crackBranches.forEach(branch => {
-          const totalPoints = branch.points.length;
-          const drawCount = Math.floor(propFactor * totalPoints);
-          branch.line.geometry.setDrawRange(0, drawCount);
-        });
+      } else {
+        const minDist = Math.min(...this.crackCenters.map(c => c.position.distanceTo(localHit)));
+        if (minDist > 0.48 && this.crackCenters.length < 6) {
+          shouldSpawn = true;
+        }
       }
+
+      if (shouldSpawn) {
+        this.spawnCrackCenter(localHit, localNormal, localDragDir);
+      }
+
+      this.lastLocalHitPt = localHit.clone();
+
+      // 균열 스케일 업데이트
+      this.crackGroup.scale.setScalar(1.0 + this.pressure * 0.012);
 
       // 압력에 따른 Y축 짓눌림 및 X/Z축 팽창 스케일링
       const squash = 1.0 - (this.pressure * 0.16);
       const stretch = 1.0 + (this.pressure * 0.06);
       this.group.scale.set(stretch, squash, stretch);
 
-      // 즉각적인 소리 피드백: 압력 증가에 따라 주기적 재생, 그리고 무작위 드래그 재생 (첫 터치는 handleStart에서 처리)
+      // 즉각적인 소리 피드백
       let shouldPlayCrunch = false;
       if (this.pressure - this.lastPlayedPressure > 0.08) {
         shouldPlayCrunch = true;
@@ -1934,13 +2209,27 @@ class ChocoBananaBall {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
       this.group.position.set(this.deformX, this.deformY, 0);
-      this.lastPlayedPressure = this.pressure; // 릴리즈 시 다음 터치 즉시 소리 유도
+      this.lastPlayedPressure = this.pressure; 
+      this.lastLocalHitPt = null;
 
       // 탄성 복원 스케일
       this.group.scale.x += (1.0 - this.group.scale.x) * 0.18;
       this.group.scale.y += (1.0 - this.group.scale.y) * 0.18;
       this.group.scale.z += (1.0 - this.group.scale.z) * 0.18;
     }
+
+    // 균열 진행 애니메이션 업데이트
+    this.crackCenters.forEach(center => {
+      if (center.progress < 1.0) {
+        center.progress += 0.08;
+        if (center.progress > 1.0) center.progress = 1.0;
+        center.branches.forEach(branch => {
+          const totalPoints = branch.points.length;
+          const drawCount = Math.floor(center.progress * totalPoints);
+          branch.line.geometry.setDrawRange(0, drawCount);
+        });
+      }
+    });
   }
 
   explode(particles, isFrozen = false) {
@@ -1977,6 +2266,15 @@ class ChocoBananaBall {
       }
     }
 
+    // 균열선 리소스 해제
+    this.crackCenters.forEach(c => {
+      c.branches.forEach(b => {
+        b.line.geometry.dispose();
+        b.line.material.dispose();
+      });
+    });
+    this.crackGroup.clear();
+
     this.scene.remove(this.group);
 
     this.softBody = new SoftBody3D(this.scene, 'sphere', this.r * 1.05, '#ffd54f', '#4e342e', 18, ['normal']);
@@ -1991,10 +2289,13 @@ class ChocoBananaBall {
       this.scene.remove(this.group);
       this.chocoMesh.geometry.dispose();
       this.chocoMesh.material.dispose();
-      this.crackGroup.children.forEach(c => {
-        c.geometry.dispose();
-        c.material.dispose();
+      this.crackCenters.forEach(c => {
+        c.branches.forEach(b => {
+          b.line.geometry.dispose();
+          b.line.material.dispose();
+        });
       });
+      this.crackGroup.clear();
     }
   }
 }
@@ -2015,6 +2316,13 @@ class App3D {
     this.hudStatus = document.getElementById('status-title');
     this.guideOverlay = document.getElementById('interaction-guide');
     this.cards = document.querySelectorAll('.skin-card');
+
+    this.handlesContainer = document.getElementById('clay-handles');
+    this.handleLeft = document.getElementById('handle-left');
+    this.handleRight = document.getElementById('handle-right');
+
+    this.leftDragState = { active: false, startX: 0, startY: 0 };
+    this.rightDragState = { active: false, startX: 0, startY: 0 };
 
     this.pointer = { x: 0, y: 0, px: 0, py: 0, active: false, xNDC: 0, yNDC: 0, justPressed: false };
     this.hapticEnabled = true;
@@ -2311,6 +2619,122 @@ class App3D {
         this.spawnBall();
       });
     });
+
+    // --- 클레이 늘이기 핸들 이벤트 바인딩 ---
+    const handleLeftStart = (e) => {
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+      if (!this.ball || this.ball.stage !== 2 || !this.ball.softBody) return;
+
+      this.leftDragState.active = true;
+      const clientX = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
+      const clientY = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
+      this.leftDragState.startX = clientX;
+      this.leftDragState.startY = clientY;
+
+      this.handleLeft.classList.remove('returning');
+      this.ball.softBody.leftDragActive = true;
+    };
+
+    const handleRightStart = (e) => {
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+      if (!this.ball || this.ball.stage !== 2 || !this.ball.softBody) return;
+
+      this.rightDragState.active = true;
+      const clientX = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
+      const clientY = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
+      this.rightDragState.startX = clientX;
+      this.rightDragState.startY = clientY;
+
+      this.handleRight.classList.remove('returning');
+      this.ball.softBody.rightDragActive = true;
+    };
+
+    const handleHandleMove = (e) => {
+      // 왼쪽 핸들 이동
+      if (this.leftDragState.active) {
+        const clientX = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
+        const clientY = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
+        
+        let dx = clientX - this.leftDragState.startX;
+        let dy = clientY - this.leftDragState.startY;
+
+        const maxDragDist = 180;
+        const dist = Math.hypot(dx, dy);
+        if (dist > maxDragDist) {
+          dx = (dx / dist) * maxDragDist;
+          dy = (dy / dist) * maxDragDist;
+        }
+
+        this.handleLeft.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px)`;
+
+        const scale = 0.012;
+        this.ball.softBody.leftDragOffset.set(dx * scale, -dy * scale, 0);
+
+        // 질척이는 효과음 재생
+        if (Math.random() < 0.22) {
+          audio.playSquelch(0.6, new THREE.Vector3(-1.5, 0, 0));
+          if (this.hapticEnabled && navigator.vibrate) navigator.vibrate(6);
+        }
+      }
+
+      // 오른쪽 핸들 이동
+      if (this.rightDragState.active) {
+        const clientX = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
+        const clientY = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
+        
+        let dx = clientX - this.rightDragState.startX;
+        let dy = clientY - this.rightDragState.startY;
+
+        const maxDragDist = 180;
+        const dist = Math.hypot(dx, dy);
+        if (dist > maxDragDist) {
+          dx = (dx / dist) * maxDragDist;
+          dy = (dy / dist) * maxDragDist;
+        }
+
+        this.handleRight.style.transform = `translate(50%, -50%) translate(${dx}px, ${dy}px)`;
+
+        const scale = 0.012;
+        this.ball.softBody.rightDragOffset.set(dx * scale, -dy * scale, 0);
+
+        if (Math.random() < 0.22) {
+          audio.playSquelch(0.6, new THREE.Vector3(1.5, 0, 0));
+          if (this.hapticEnabled && navigator.vibrate) navigator.vibrate(6);
+        }
+      }
+    };
+
+    const handleHandleEnd = () => {
+      if (this.leftDragState.active) {
+        this.leftDragState.active = false;
+        this.handleLeft.classList.add('returning');
+        this.handleLeft.style.transform = '';
+        if (this.ball && this.ball.softBody) {
+          this.ball.softBody.leftDragActive = false;
+        }
+      }
+      if (this.rightDragState.active) {
+        this.rightDragState.active = false;
+        this.handleRight.classList.add('returning');
+        this.handleRight.style.transform = '';
+        if (this.ball && this.ball.softBody) {
+          this.ball.softBody.rightDragActive = false;
+        }
+      }
+    };
+
+    this.handleLeft.addEventListener('mousedown', handleLeftStart, { passive: false });
+    this.handleLeft.addEventListener('touchstart', handleLeftStart, { passive: false });
+    this.handleRight.addEventListener('mousedown', handleRightStart, { passive: false });
+    this.handleRight.addEventListener('touchstart', handleRightStart, { passive: false });
+
+    window.addEventListener('mousemove', handleHandleMove, { passive: false });
+    window.addEventListener('touchmove', handleHandleMove, { passive: false });
+    window.addEventListener('mouseup', handleHandleEnd);
+    window.addEventListener('touchend', handleHandleEnd);
+    window.addEventListener('touchcancel', handleHandleEnd);
   }
 
   animate() {
@@ -2331,6 +2755,15 @@ class App3D {
       } else if (this.ball.stage === 2) {
         this.hudStatus.textContent = "반죽하기";
         this.hudStatus.className = "status-badge scrambled";
+      }
+
+      // 핸들 레이어 시각 여부 토글
+      if (this.handlesContainer) {
+        if (this.ball.stage === 2) {
+          this.handlesContainer.classList.remove('hidden');
+        } else {
+          this.handlesContainer.classList.add('hidden');
+        }
       }
     }
 
