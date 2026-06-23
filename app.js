@@ -627,13 +627,60 @@ class SoftBody3D {
       this.geometry = new THREE.SphereGeometry(r, 12, 10);
     }
     
-    this.material = new THREE.MeshStandardMaterial({
-      color: this.color,
-      roughness: 0.22,
-      metalness: 0.02,
-      transparent: true,
-      opacity: 1.0
-    });
+    if (this.color === '#ffffff' || this.color === '#e2f5d3') {
+      // 청사과 점토: 벨벳 느낌의 보송한 점토 질감
+      this.material = new THREE.MeshPhysicalMaterial({
+        color: this.color,
+        roughness: 0.8,
+        metalness: 0.0,
+        sheen: 1.0,
+        sheenRoughness: 0.5,
+        transparent: true,
+        opacity: 1.0
+      });
+    } else if (this.color === '#ffe082') {
+      // 버터 점토: 약간 윤기 나는 크리미한 질감
+      this.material = new THREE.MeshPhysicalMaterial({
+        color: this.color,
+        roughness: 0.4,
+        metalness: 0.0,
+        clearcoat: 0.2,
+        clearcoatRoughness: 0.3,
+        transparent: true,
+        opacity: 1.0
+      });
+    } else if (this.color === '#e0f7fa') {
+      // 크리스피 미니: 물광 젤리 같은 반투명한 질감
+      this.material = new THREE.MeshPhysicalMaterial({
+        color: this.color,
+        roughness: 0.12,
+        metalness: 0.02,
+        transmission: 0.85,
+        ior: 1.33,
+        thickness: 0.5,
+        transparent: true,
+        opacity: 0.8
+      });
+    } else if (this.color === '#ffd54f' || this.color === '#bcaaa4') {
+      // 초코바나나 점토: 끈적한 바나나 머드 질감
+      this.material = new THREE.MeshPhysicalMaterial({
+        color: this.color,
+        roughness: 0.7,
+        metalness: 0.0,
+        sheen: 0.8,
+        sheenRoughness: 0.4,
+        transparent: true,
+        opacity: 1.0
+      });
+    } else {
+      this.material = new THREE.MeshStandardMaterial({
+        color: this.color,
+        roughness: 0.22,
+        metalness: 0.02,
+        transparent: true,
+        opacity: 1.0
+      });
+    }
 
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.castShadow = true;
@@ -887,10 +934,27 @@ class GreenAppleBall {
     this.group = new THREE.Group();
 
     const shellGeo = new THREE.SphereGeometry(this.r, 32, 32);
-    const shellMat = new THREE.MeshStandardMaterial({
+    // 오가닉한 왁스 질감을 위해 구 정점에 불규칙한 엠보싱 노이즈 가산
+    const posAttr = shellGeo.attributes.position;
+    const normalAttr = shellGeo.attributes.normal;
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      const z = posAttr.getZ(i);
+      const nx = normalAttr.getX(i);
+      const ny = normalAttr.getY(i);
+      const nz = normalAttr.getZ(i);
+      const noise = (Math.sin(x * 3.5) * Math.cos(y * 3.5) * Math.sin(z * 3.5)) * 0.022;
+      posAttr.setXYZ(i, x + nx * noise, y + ny * noise, z + nz * noise);
+    }
+    shellGeo.computeVertexNormals();
+
+    const shellMat = new THREE.MeshPhysicalMaterial({
       color: 0x76ff03,
-      roughness: 0.12,
-      metalness: 0.05
+      roughness: 0.15,
+      metalness: 0.0,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.1
     });
     this.shellMesh = new THREE.Mesh(shellGeo, shellMat);
     this.shellMesh.castShadow = true;
@@ -1065,9 +1129,23 @@ class ButterStickBall {
     const startY = -this.h / 2;
 
     const flakeGeo = new THREE.BoxGeometry(fw * 0.95, fh * 0.95, 0.08);
-    const flakeMat = new THREE.MeshStandardMaterial({
+    // 석고 조각 질감 향상: 울퉁불퉁한 표면 표현
+    const fPos = flakeGeo.attributes.position;
+    for (let i = 0; i < fPos.count; i++) {
+      const z = fPos.getZ(i);
+      if (Math.abs(z) > 0.01) {
+        const x = fPos.getX(i);
+        const y = fPos.getY(i);
+        fPos.setZ(i, z + (Math.sin(x*10) * Math.cos(y*10)) * 0.015);
+      }
+    }
+    flakeGeo.computeVertexNormals();
+
+    const flakeMat = new THREE.MeshPhysicalMaterial({
       color: 0xf5f5f5,
-      roughness: 0.6
+      roughness: 0.95,
+      metalness: 0.0,
+      clearcoat: 0.0
     });
 
     for (let r = 0; r < rows; r++) {
@@ -1232,11 +1310,14 @@ class MiniBalloonBall {
     this.balloonMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       transparent: true,
-      opacity: 0.22,
-      roughness: 0.1,
-      metalness: 0.05,
-      transmission: 0.95, 
-      thickness: 0.8
+      opacity: 0.35,
+      roughness: 0.02,
+      metalness: 0.0,
+      transmission: 0.98,
+      ior: 1.45,
+      thickness: 0.6,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05
     });
     this.balloonMesh = new THREE.Mesh(balloonGeo, this.balloonMat);
     this.group.add(this.balloonMesh);
@@ -1244,10 +1325,12 @@ class MiniBalloonBall {
     this.beads = [];
     const beadGeo = new THREE.SphereGeometry(1.0, 16, 16);
     this.beadData.forEach(bd => {
-      const beadMat = new THREE.MeshStandardMaterial({
+      const beadMat = new THREE.MeshPhysicalMaterial({
         color: bd.color,
-        roughness: 0.15,
-        metalness: 0.05
+        roughness: 0.1,
+        metalness: 0.0,
+        clearcoat: 0.8,
+        clearcoatRoughness: 0.1
       });
       const bMesh = new THREE.Mesh(beadGeo, beadMat);
       bMesh.scale.setScalar(bd.r);
@@ -1467,10 +1550,27 @@ class ChocoBananaBall {
     this.group = new THREE.Group();
 
     const chocoGeo = new THREE.SphereGeometry(this.r, 32, 32);
-    const chocoMat = new THREE.MeshStandardMaterial({
+    // 수제 초콜릿 코팅처럼 자연스러운 굴곡 노이즈 가산
+    const cPos = chocoGeo.attributes.position;
+    const cNormal = chocoGeo.attributes.normal;
+    for (let i = 0; i < cPos.count; i++) {
+      const x = cPos.getX(i);
+      const y = cPos.getY(i);
+      const z = cPos.getZ(i);
+      const nx = cNormal.getX(i);
+      const ny = cNormal.getY(i);
+      const nz = cNormal.getZ(i);
+      const noise = (Math.sin(x * 2.2) * Math.cos(z * 2.2)) * 0.028;
+      cPos.setXYZ(i, x + nx * noise, y + ny * noise, z + nz * noise);
+    }
+    chocoGeo.computeVertexNormals();
+
+    const chocoMat = new THREE.MeshPhysicalMaterial({
       color: 0x3e2723,
-      roughness: 0.55,
-      metalness: 0.05
+      roughness: 0.45,
+      metalness: 0.0,
+      clearcoat: 0.25,
+      clearcoatRoughness: 0.3
     });
     this.chocoMesh = new THREE.Mesh(chocoGeo, chocoMat);
     this.chocoMesh.castShadow = true;
@@ -1635,6 +1735,10 @@ class App3D {
     dirLight.shadow.mapSize.height = 1024;
     dirLight.shadow.bias = -0.001;
     this.scene.add(dirLight);
+
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.55);
+    rimLight.position.set(-6, 4, -6);
+    this.scene.add(rimLight);
 
     this.cyanLight = new THREE.PointLight(0x00f0ff, 1.3, 15);
     this.cyanLight.position.set(-5, 2, 1);
