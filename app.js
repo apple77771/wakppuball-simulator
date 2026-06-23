@@ -29,19 +29,69 @@ class AudioSynth {
   }
 
   // 1-1. 실제 왁스 코팅이 으스러지는 '꽈자작! 꽈득! 아작아작' 리얼 크런치 사운드
-  // (전자음 느낌을 완전히 배제하고 오가닉한 물리적 파열음 구현)
-  playCrunch(pitchMultiplier = 1.0) {
+  // (각 왁뿌별 파라미터를 다르게 하여 오가닉하고 독창적인 파열음 구현)
+  playCrunch(type = 'apple', pitchMultiplier = 1.0) {
     if (this.muted || !this.ctx) return;
     this.resume();
 
     const now = this.ctx.currentTime;
 
+    // 각 타입별 맞춤형 물리음향 파라미터 세팅
+    let snapFreq = 450;
+    let snapQ = 4;
+    let snapGainVal = 0.7;
+    let snapDecay = 0.06;
+    
+    let crackleCount = 4 + Math.floor(Math.random() * 4);
+    let crackleMinFreq = 1100;
+    let crackleMaxFreq = 1700;
+    let crackleGainVal = 0.35;
+    let crackleDecay = 0.012;
+    let crackleDelayMult = 0.012;
+
+    if (type === 'apple') {
+      snapFreq = 500;
+      snapQ = 5;
+      snapGainVal = 0.75;
+      snapDecay = 0.05;
+      crackleCount = 6 + Math.floor(Math.random() * 4); // 바삭하게 잔글씨가 많이 나는 청사과
+      crackleMinFreq = 1300;
+      crackleMaxFreq = 1900;
+    } else if (type === 'butter') {
+      snapFreq = 260; // 둔탁하게 밀리면서 뭉개지는 소리
+      snapQ = 2.5;
+      snapGainVal = 0.85;
+      snapDecay = 0.09;
+      crackleCount = 2 + Math.floor(Math.random() * 2); // 잔크랙 소리 적게
+      crackleMinFreq = 700;
+      crackleMaxFreq = 1100;
+      crackleGainVal = 0.2;
+    } else if (type === 'balloon') {
+      snapFreq = 700; // 아주 가볍고 탄탄한 막 터지는 소리
+      snapQ = 6;
+      snapGainVal = 0.65;
+      snapDecay = 0.04;
+      crackleCount = 4 + Math.floor(Math.random() * 3);
+      crackleMinFreq = 1600;
+      crackleMaxFreq = 2300;
+      crackleGainVal = 0.45;
+      crackleDecay = 0.008;
+    } else if (type === 'choco') {
+      snapFreq = 190; // 낮고 무겁게 툭 부서지는 초코 덩어리
+      snapQ = 3;
+      snapGainVal = 0.95;
+      snapDecay = 0.12;
+      crackleCount = 3 + Math.floor(Math.random() * 3);
+      crackleMinFreq = 550;
+      crackleMaxFreq = 850;
+      crackleGainVal = 0.3;
+      crackleDecay = 0.02;
+    }
+
     // -------------------------------------------------------------
     // 레이어 A: '꽈득!' 둔탁하게 부서지는 왁스 본체의 저주파 타격음 (Dull Snap)
     // -------------------------------------------------------------
-    // 노이즈 대신 브라운 노이즈(낮고 묵직한 마찰)를 시뮬레이션하기 위해
-    // 핑크/화이트 노이즈 버퍼를 로우패스 필터로 매우 낮게 걸러 사용합니다.
-    const snapBufferSize = this.ctx.sampleRate * 0.08;
+    const snapBufferSize = this.ctx.sampleRate * snapDecay;
     const snapBuffer = this.ctx.createBuffer(1, snapBufferSize, this.ctx.sampleRate);
     const snapData = snapBuffer.getChannelData(0);
     for (let i = 0; i < snapBufferSize; i++) {
@@ -52,29 +102,26 @@ class AudioSynth {
 
     const snapFilter = this.ctx.createBiquadFilter();
     snapFilter.type = 'bandpass';
-    snapFilter.frequency.setValueAtTime(450 * pitchMultiplier, now); // 450Hz 부근의 무거운 둔탁음
-    snapFilter.Q.setValueAtTime(4, now);
+    snapFilter.frequency.setValueAtTime(snapFreq * pitchMultiplier, now);
+    snapFilter.Q.setValueAtTime(snapQ, now);
 
     const snapGain = this.ctx.createGain();
-    snapGain.gain.setValueAtTime(0.7, now);
-    snapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+    snapGain.gain.setValueAtTime(snapGainVal, now);
+    snapGain.gain.exponentialRampToValueAtTime(0.001, now + snapDecay - 0.01);
 
     snapSource.connect(snapFilter);
     snapFilter.connect(snapGain);
     snapGain.connect(this.ctx.destination);
     snapSource.start(now);
-    snapSource.stop(now + 0.07);
+    snapSource.stop(now + snapDecay);
 
     // -------------------------------------------------------------
     // 레이어 B: '꽈자작! 아작!' 표면이 여러 갈래로 쩍쩍 쪼개지는 파열음
     // -------------------------------------------------------------
-    // 연속적인 노이즈가 아닌, 불규칙하게 군집된 짧은 임펄스 신호들로 구성합니다.
-    const crackleCount = 4 + Math.floor(Math.random() * 4); // 4~7개의 마이크로 파편음
     for (let i = 0; i < crackleCount; i++) {
-      // 0~60ms 사이의 불규칙한 지연 발생 (아작아작하는 텍스처 구현)
-      const delay = i * 0.012 + Math.random() * 0.015;
+      const delay = i * crackleDelayMult + Math.random() * 0.015;
       
-      const impulseBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.015, this.ctx.sampleRate);
+      const impulseBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * crackleDecay, this.ctx.sampleRate);
       const impulseData = impulseBuffer.getChannelData(0);
       for (let j = 0; j < impulseData.length; j++) {
         impulseData[j] = Math.random() * 2 - 1;
@@ -83,21 +130,20 @@ class AudioSynth {
       impulseSource.buffer = impulseBuffer;
 
       const impulseFilter = this.ctx.createBiquadFilter();
-      // 머리 아픈 초고주파를 피해 자연스럽고 건조한 1.2kHz~1.8kHz 대역 사용
       impulseFilter.type = 'bandpass';
-      impulseFilter.frequency.setValueAtTime((1100 + Math.random() * 600) * pitchMultiplier, now + delay);
+      impulseFilter.frequency.setValueAtTime((crackleMinFreq + Math.random() * (crackleMaxFreq - crackleMinFreq)) * pitchMultiplier, now + delay);
       impulseFilter.Q.setValueAtTime(8, now + delay);
 
       const impulseGain = this.ctx.createGain();
-      impulseGain.gain.setValueAtTime(0.35, now + delay);
-      impulseGain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.012);
+      impulseGain.gain.setValueAtTime(crackleGainVal, now + delay);
+      impulseGain.gain.exponentialRampToValueAtTime(0.001, now + delay + crackleDecay - 0.002);
 
       impulseSource.connect(impulseFilter);
       impulseFilter.connect(impulseGain);
       impulseGain.connect(this.ctx.destination);
 
       impulseSource.start(now + delay);
-      impulseSource.stop(now + delay + 0.02);
+      impulseSource.stop(now + delay + crackleDecay + 0.01);
     }
   }
 
@@ -176,14 +222,35 @@ class AudioSynth {
   }
 
   // 1-4. 점토/클레이를 으깨고 쪼물딱거릴 때 나는 리얼한 '쩍쩍, 질퍽한' 기포 사운드 (Wet Clay Squelch)
-  // (전자음 성분을 완전히 없애고 물기 있는 찰떡과 점토 마찰 소리를 정교하게 합성)
+  // (음질이 나쁜 비디오의 바람 소리 같은 저주파 노이즈를 없애고, 쫀득하고 찰진 반죽 뭉침과 기포 파열음 위주로 재구성)
   playSquelch(intensity = 0.5) {
     if (this.muted || !this.ctx) return;
     
     const now = this.ctx.currentTime;
 
-    // 1) 점토가 비벼질 때의 묵직하고 먹먹한 저역대 마찰음 (Doughy friction)
-    const frictionBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.15, this.ctx.sampleRate);
+    // 1) 점토가 비벼질 때의 묵직한 물리적 저음 (Doughy thud oscillator)
+    // 노이즈 필터링 방식 대신 부드러운 삼각파 주파수 스윕을 사용하여 바람 소리(Hiss) 유발을 완전히 방지합니다.
+    const oscDough = this.ctx.createOscillator();
+    oscDough.type = 'triangle';
+    oscDough.frequency.setValueAtTime(80 + intensity * 30, now);
+    oscDough.frequency.exponentialRampToValueAtTime(35, now + 0.12);
+
+    const doughFilter = this.ctx.createBiquadFilter();
+    doughFilter.type = 'lowpass';
+    doughFilter.frequency.setValueAtTime(100, now);
+
+    const doughGain = this.ctx.createGain();
+    doughGain.gain.setValueAtTime(0.2 * intensity, now);
+    doughGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+    oscDough.connect(doughFilter);
+    doughFilter.connect(doughGain);
+    doughGain.connect(this.ctx.destination);
+    oscDough.start(now);
+    oscDough.stop(now + 0.13);
+
+    // 극소량의 젖은 수분 마찰만 보조적으로 주입 (매우 좁은 밴드패스 필터링 및 극도의 볼륨 감소로 바람 소리 제거)
+    const frictionBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.06, this.ctx.sampleRate);
     const frictionData = frictionBuffer.getChannelData(0);
     for (let i = 0; i < frictionData.length; i++) {
       frictionData[i] = Math.random() * 2 - 1;
@@ -192,42 +259,39 @@ class AudioSynth {
     frictionSource.buffer = frictionBuffer;
 
     const frictionFilter = this.ctx.createBiquadFilter();
-    frictionFilter.type = 'lowpass';
-    // 100Hz~150Hz 부근의 극저음 필터링으로 '스윽 스윽' 비벼지는 찰떡 소리 구현
-    frictionFilter.frequency.setValueAtTime(110 + intensity * 40, now);
+    frictionFilter.type = 'bandpass';
+    frictionFilter.frequency.setValueAtTime(250, now); // 250Hz 수분 마찰 대역
+    frictionFilter.Q.setValueAtTime(3.5, now);
 
     const frictionGain = this.ctx.createGain();
-    const targetFriction = Math.min(0.28 * intensity, 0.35);
-    frictionGain.gain.setValueAtTime(0.001, now);
-    frictionGain.gain.linearRampToValueAtTime(targetFriction, now + 0.04);
-    frictionGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    frictionGain.gain.setValueAtTime(0.04 * intensity, now);
+    frictionGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
 
     frictionSource.connect(frictionFilter);
     frictionFilter.connect(frictionGain);
     frictionGain.connect(this.ctx.destination);
     frictionSource.start(now);
-    frictionSource.stop(now + 0.15);
+    frictionSource.stop(now + 0.06);
 
     // 2) 찰떡을 쥘 때 끈적하게 기포가 쩍쩍 터지는 사운드 (Wet Sticky Micro-Pops)
-    // 여러 개의 짧은 극소형 주파수 스윕(Bubble sweeps)을 마이크로 단위로 배치
-    const bubbleCount = 3 + Math.floor(Math.random() * 4); // 3~6개 기포
+    // 개수를 늘리고 볼륨을 높여 점토가 뭉치는 질감이 귀에 더 또렷이 들리도록 함
+    const bubbleCount = 4 + Math.floor(Math.random() * 4); // 4~7개 기포
     for (let i = 0; i < bubbleCount; i++) {
       const bubbleDelay = i * 0.015 + Math.random() * 0.02;
       
       const osc = this.ctx.createOscillator();
-      osc.type = 'sine'; // 순수 사인파로 부드럽고 쩍쩍거리는 물기포 구현
+      osc.type = 'sine'; 
       
-      // 180Hz -> 50Hz 근방으로 빠르게 떨어지는 찰떡 속 기포 수축 표현
-      const startFreq = 160 + Math.random() * 90;
+      const startFreq = 220 + Math.random() * 120;
       osc.frequency.setValueAtTime(startFreq, now + bubbleDelay);
-      osc.frequency.exponentialRampToValueAtTime(40, now + bubbleDelay + 0.015);
+      osc.frequency.exponentialRampToValueAtTime(45, now + bubbleDelay + 0.015);
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(320, now + bubbleDelay);
+      filter.frequency.setValueAtTime(420, now + bubbleDelay); // 320Hz -> 420Hz 기포 선명도 증가
 
       const gainNode = this.ctx.createGain();
-      const targetGain = (0.07 + Math.random() * 0.06) * intensity;
+      const targetGain = (0.12 + Math.random() * 0.08) * intensity; // 찰진 쩍쩍 소리 증폭
       gainNode.gain.setValueAtTime(0.001, now + bubbleDelay);
       gainNode.gain.linearRampToValueAtTime(targetGain, now + bubbleDelay + 0.003);
       gainNode.gain.exponentialRampToValueAtTime(0.001, now + bubbleDelay + 0.015);
@@ -389,6 +453,24 @@ class Particle {
 }
 
 
+// Color interpolation helper for melting shards
+function interpolateColor(color1, color2, factor) {
+  // Hex to RGB
+  const r1 = parseInt(color1.substring(1, 3), 16);
+  const g1 = parseInt(color1.substring(3, 5), 16);
+  const b1 = parseInt(color1.substring(5, 7), 16);
+
+  const r2 = parseInt(color2.substring(1, 3), 16);
+  const g2 = parseInt(color2.substring(3, 5), 16);
+  const b2 = parseInt(color2.substring(5, 7), 16);
+
+  const r = Math.round(r1 + (r2 - r1) * factor);
+  const g = Math.round(g1 + (g2 - g1) * factor);
+  const b = Math.round(b1 + (b2 - b1) * factor);
+
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
 // ============================================================================
 // 3. 점떡같이 쫀쫀하고 질퍽한 소프트바디 반죽 엔진 (Doughy Soft-Body Physics)
 // ============================================================================
@@ -420,6 +502,11 @@ class SoftBody {
     this.gravity = 0.03;
 
     this.draggedParticleIdx = -1;
+
+    // 조각 융해/합일 옵션
+    this.meltShards = false;
+    this.baseColor = color;
+    this.targetColor = color;
 
     this.init(x, y, radius);
     this.initShards(shardCount, toppings);
@@ -478,7 +565,8 @@ class SoftBody {
         angleOffset,
         size,
         color: Array.isArray(this.shardColor) ? this.shardColor[Math.floor(Math.random() * this.shardColor.length)] : this.shardColor,
-        type: toppings.length > 0 ? toppings[Math.floor(Math.random() * toppings.length)] : 'normal'
+        type: toppings.length > 0 ? toppings[Math.floor(Math.random() * toppings.length)] : 'normal',
+        opacity: 1.0
       });
     }
   }
@@ -512,6 +600,19 @@ class SoftBody {
           audio.playSquelch(dragSpeed * 0.18); // 찰떡 질척이는 쩍쩍 사운드
           if (navigator.vibrate && Math.random() < 0.18) {
             navigator.vibrate(6);
+          }
+
+          // 융해 기능 활성화 시 조각을 페이드아웃시키고 크기를 줄임 & 배경색 혼합
+          if (this.meltShards) {
+            let totalOpacity = 0;
+            this.shards.forEach(shard => {
+              shard.opacity -= dragSpeed * 0.0018; // 반죽 속도에 비례해 융합 진행
+              if (shard.opacity < 0) shard.opacity = 0;
+              totalOpacity += shard.opacity;
+            });
+            const avgOpacity = this.shards.length > 0 ? totalOpacity / this.shards.length : 0;
+            const factor = 1.0 - avgOpacity;
+            this.color = interpolateColor(this.baseColor, this.targetColor, factor);
           }
         }
       }
@@ -625,6 +726,8 @@ class SoftBody {
 
     for (let i = 0; i < this.shards.length; i++) {
       const shard = this.shards[i];
+      if (shard.opacity !== undefined && shard.opacity <= 0) continue; // 완전히 녹아버린 조각은 드로잉 스킵
+
       const boundaryP = this.particles[shard.pIndex];
       
       const baseAngle = Math.atan2(boundaryP.y - center.y, boundaryP.x - center.x) + shard.angleOffset;
@@ -638,9 +741,15 @@ class SoftBody {
       ctx.rotate(baseAngle);
       ctx.fillStyle = shard.color;
       
+      if (shard.opacity !== undefined) {
+        ctx.globalAlpha = shard.opacity;
+      }
+      
+      const opacityScale = shard.opacity !== undefined ? shard.opacity : 1.0;
+
       if (shard.type === 'normal') {
         ctx.beginPath();
-        const s = shard.size;
+        const s = shard.size * opacityScale;
         ctx.moveTo(-s, -s);
         ctx.lineTo(s * 0.8, -s * 0.7);
         ctx.lineTo(s * 0.9, s * 0.6);
@@ -651,16 +760,16 @@ class SoftBody {
       } else if (shard.type === 'apple') {
         ctx.fillStyle = '#f87171';
         ctx.beginPath();
-        ctx.arc(0, 0, shard.size, 0, Math.PI, true);
+        ctx.arc(0, 0, shard.size * opacityScale, 0, Math.PI, true);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = '#4ade80';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.5 * opacityScale;
         ctx.stroke();
       } else if (shard.type === 'star') {
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        const r = shard.size;
+        const r = shard.size * opacityScale;
         for (let j = 0; j < 5; j++) {
           ctx.lineTo(Math.cos((18 + j * 72) * Math.PI / 180) * r, Math.sin((18 + j * 72) * Math.PI / 180) * r);
           ctx.lineTo(Math.cos((54 + j * 72) * Math.PI / 180) * (r / 2), Math.sin((54 + j * 72) * Math.PI / 180) * (r / 2));
@@ -669,7 +778,8 @@ class SoftBody {
         ctx.fill();
       } else if (shard.type === 'flake') {
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(-shard.size, -shard.size * 0.5, shard.size * 2, shard.size);
+        const sw = shard.size * opacityScale;
+        ctx.fillRect(-sw, -sw * 0.5, sw * 2, sw);
       }
       ctx.restore();
     }
@@ -723,9 +833,9 @@ class GreenAppleBall {
         this.crackProgress = (this.pressure - 0.3) / 0.7;
       }
 
-      // 왁스 으깨짐 소리 (리얼 아작아작)
+      // 왁스 으깨짐 소리 (리얼 아작아작 - 청사과 타입 고유음)
       if (Math.random() < 0.15) {
-        audio.playCrunch(1.0); 
+        audio.playCrunch('apple', 1.0); 
         if (navigator.vibrate) navigator.vibrate(8);
         particles.push(new Particle(pointer.x, pointer.y, '#76ff03', 3 + Math.random()*3));
       }
@@ -759,6 +869,8 @@ class GreenAppleBall {
     }
 
     this.softBody = new SoftBody(this.cx, this.cy, this.r * 1.06, '#ffffff', ['#76ff03', '#ccff90'], 20, ['normal', 'apple', 'star']);
+    this.softBody.meltShards = true;
+    this.softBody.targetColor = '#e2f5d3'; // 융해 단계 완료 시 연두빛 크림으로 섞여 들어감
   }
 
   draw(ctx) {
@@ -1002,6 +1114,9 @@ class MiniBalloonBall {
     
     this.stage = 0;
     this.softBody = null;
+    this.pressure = 0.0;
+    this.deformX = 0;
+    this.deformY = 0;
 
     this.beads = [
       new MiniWaxBead(cx - 30, cy - 20, 24, '#f06292'),
@@ -1016,6 +1131,7 @@ class MiniBalloonBall {
       return;
     }
 
+    // 비드 자체 관성 물리 업데이트 및 외벽 충돌 처리
     for (let i = 0; i < this.beads.length; i++) {
       const b = this.beads[i];
       if (b.stage === 2) continue;
@@ -1039,6 +1155,7 @@ class MiniBalloonBall {
         b.vy = -Math.sin(angle) * Math.max(speed, 0.6);
       }
 
+      // 비드 상호 충돌 처리
       for (let j = i + 1; j < this.beads.length; j++) {
         const other = this.beads[j];
         if (other.stage === 2) continue;
@@ -1067,42 +1184,88 @@ class MiniBalloonBall {
       }
     }
 
-    if (pointer.active) {
+    const dx = pointer.x - this.cx;
+    const dy = pointer.y - this.cy;
+    const dist = Math.hypot(dx, dy);
+
+    // 사용자가 마우스를 클릭하고 문질러서 흔들면 깨지게 수정
+    if (pointer.active && dist < this.r + 20) {
+      this.deformX = (pointer.x - this.cx) * 0.22;
+      this.deformY = (pointer.y - this.cy) * 0.22;
+
+      const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
+      this.pressure += 0.008 + dragSpeed * 0.0018;
+
+      // 흔들림에 따라 비드들이 안에서 날뛰도록 속도 유입
       this.beads.forEach(b => {
         if (b.stage !== 2) {
-          const dx = pointer.x - b.x;
-          const dy = pointer.y - b.y;
-          const dist = Math.hypot(dx, dy);
-
-          if (dist < b.r + 18) {
-            b.pressure += 0.055;
-            b.stage = 1;
-            
-            b.vx += (Math.random() - 0.5) * 3;
-            b.vy += (Math.random() - 0.5) * 3;
-
-            if (Math.random() < 0.18) {
-              audio.playCrunch(1.35); 
-              if (navigator.vibrate) navigator.vibrate(5);
-            }
-
-            if (b.pressure >= 1.0) {
-              b.stage = 2;
-              audio.playMiniPop();
-              if (navigator.vibrate) navigator.vibrate([10, 35]);
-
-              for (let k = 0; k < 12; k++) {
-                particles.push(new Particle(b.x, b.y, b.color, 3 + Math.random() * 5));
-              }
-            }
-          }
+          b.vx += (Math.random() - 0.5) * (2 + dragSpeed * 0.5);
+          b.vy += (Math.random() - 0.5) * (2 + dragSpeed * 0.5);
         }
       });
 
+      // 바삭한 소리 크래킹 사운드 (미니벌룬 고유음)
+      if (Math.random() < 0.15) {
+        audio.playCrunch('balloon', 1.35);
+        if (navigator.vibrate) navigator.vibrate(5);
+      }
+
+      // 비드 0 단계 업데이트 (0.25 임계치 도달 시 톡!)
+      if (this.pressure > 0.05 && this.pressure < 0.25 && this.beads[0].stage !== 2) {
+        this.beads[0].stage = 1;
+      }
+      if (this.pressure >= 0.25 && this.beads[0].stage !== 2) {
+        this.beads[0].stage = 2;
+        audio.playMiniPop();
+        if (navigator.vibrate) navigator.vibrate([10, 35]);
+        for (let k = 0; k < 12; k++) {
+          particles.push(new Particle(this.beads[0].x, this.beads[0].y, this.beads[0].color, 3 + Math.random() * 5));
+        }
+      }
+
+      // 비드 1 단계 업데이트 (0.55 임계치 도달 시 톡!)
+      if (this.pressure > 0.35 && this.pressure < 0.55 && this.beads[1].stage !== 2) {
+        this.beads[1].stage = 1;
+      }
+      if (this.pressure >= 0.55 && this.beads[1].stage !== 2) {
+        this.beads[1].stage = 2;
+        audio.playMiniPop();
+        if (navigator.vibrate) navigator.vibrate([10, 35]);
+        for (let k = 0; k < 12; k++) {
+          particles.push(new Particle(this.beads[1].x, this.beads[1].y, this.beads[1].color, 3 + Math.random() * 5));
+        }
+      }
+
+      // 비드 2 단계 업데이트 (0.85 임계치 도달 시 톡!)
+      if (this.pressure > 0.65 && this.pressure < 0.85 && this.beads[2].stage !== 2) {
+        this.beads[2].stage = 1;
+      }
+      if (this.pressure >= 0.85 && this.beads[2].stage !== 2) {
+        this.beads[2].stage = 2;
+        audio.playMiniPop();
+        if (navigator.vibrate) navigator.vibrate([10, 35]);
+        for (let k = 0; k < 12; k++) {
+          particles.push(new Particle(this.beads[2].x, this.beads[2].y, this.beads[2].color, 3 + Math.random() * 5));
+        }
+      }
+
+      // 1.0 압력 도달 및 모든 비드가 터지면 최종 벌룬 파열!
       const allBursted = this.beads.every(b => b.stage === 2);
-      if (allBursted && this.stage !== 2) {
+      if (this.pressure >= 1.0 || allBursted) {
+        // 혹시 아직 덜 터진 비드가 있으면 강제로 다 터뜨림
+        this.beads.forEach(b => {
+          if (b.stage !== 2) {
+            b.stage = 2;
+            for (let k = 0; k < 12; k++) {
+              particles.push(new Particle(b.x, b.y, b.color, 3 + Math.random() * 5));
+            }
+          }
+        });
         this.explode(particles);
       }
+    } else {
+      this.deformX *= 0.82;
+      this.deformY *= 0.82;
     }
   }
 
@@ -1138,6 +1301,8 @@ class MiniBalloonBall {
       return;
     }
 
+    ctx.translate(this.cx + this.deformX, this.cy + this.deformY);
+
     ctx.save();
     ctx.shadowBlur = 20;
     ctx.shadowColor = 'rgba(255, 255, 255, 0.05)';
@@ -1149,37 +1314,39 @@ class MiniBalloonBall {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(this.cx, this.cy, this.r, 0, Math.PI * 2);
+    ctx.arc(0, 0, this.r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.beginPath();
-    ctx.arc(this.cx, this.cy - this.r, 7, 0, Math.PI * 2);
+    ctx.arc(0, -this.r, 7, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
     this.beads.forEach(b => {
       if (b.stage !== 2) {
         ctx.save();
-        const beadGrad = ctx.createRadialGradient(b.x - b.r*0.2, b.y - b.r*0.2, 2, b.x, b.y, b.r);
+        const rx = b.x - this.cx;
+        const ry = b.y - this.cy;
+        const beadGrad = ctx.createRadialGradient(rx - b.r*0.2, ry - b.r*0.2, 2, rx, ry, b.r);
         beadGrad.addColorStop(0, '#ffffff');
         beadGrad.addColorStop(0.3, b.color);
         beadGrad.addColorStop(1, 'rgba(0,0,0,0.55)');
         
         ctx.fillStyle = beadGrad;
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.arc(rx, ry, b.r, 0, Math.PI * 2);
         ctx.fill();
 
         if (b.stage === 1) {
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
           ctx.lineWidth = 2.5;
           ctx.beginPath();
-          ctx.moveTo(b.x - b.r * 0.7, b.y);
-          ctx.lineTo(b.x + b.r * 0.7, b.y);
-          ctx.moveTo(b.x, b.y - b.r * 0.7);
-          ctx.lineTo(b.x, b.y + b.r * 0.7);
+          ctx.moveTo(rx - b.r * 0.7, ry);
+          ctx.lineTo(rx + b.r * 0.7, ry);
+          ctx.moveTo(rx, ry - b.r * 0.7);
+          ctx.lineTo(rx, ry + b.r * 0.7);
           ctx.stroke();
         }
         ctx.restore();
@@ -1229,8 +1396,9 @@ class ChocoBananaBall {
         this.stage = 1;
       }
 
+      // 초코바나나 크런치 사운드 재생
       if (Math.random() < 0.15) {
-        audio.playCrunch(0.62); 
+        audio.playCrunch('choco', 0.62); 
         if (navigator.vibrate) navigator.vibrate(6);
         particles.push(new Particle(pointer.x, pointer.y, '#4e342e', 3 + Math.random()*3));
       }
@@ -1259,6 +1427,8 @@ class ChocoBananaBall {
     }
 
     this.softBody = new SoftBody(this.cx, this.cy, this.r * 1.05, '#ffd54f', '#4e342e', 22, ['normal']);
+    this.softBody.meltShards = true;
+    this.softBody.targetColor = '#bcaaa4'; // 초코와 바나나가 섞인 진흙 반죽색
   }
 
   draw(ctx) {
@@ -1359,11 +1529,24 @@ class App {
     this.ctx.scale(dpr, dpr);
     
     if (this.ball) {
-      this.ball.cx = rect.width / 2;
-      this.ball.cy = rect.height / 2;
+      const oldCx = this.ball.cx;
+      const oldCy = this.ball.cy;
+      const newCx = rect.width / 2;
+      const newCy = rect.height / 2;
+      const dx = newCx - oldCx;
+      const dy = newCy - oldCy;
+
+      this.ball.cx = newCx;
+      this.ball.cy = newCy;
+
+      if (this.ball.beads) {
+        this.ball.beads.forEach(b => {
+          b.x += dx;
+          b.y += dy;
+        });
+      }
+
       if (this.ball.softBody) {
-        const dx = rect.width / 2 - this.ball.softBody.particles[0].x;
-        const dy = rect.height / 2 - this.ball.softBody.particles[0].y;
         this.ball.softBody.particles.forEach(p => {
           p.x += dx;
           p.y += dy;
