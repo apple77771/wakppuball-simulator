@@ -1,5 +1,5 @@
 // ============================================================================
-// 1. 고음질 물리 모델링 ASMR 오디오 합성 엔진 (Organic ASMR Synth)
+// 1. 고음질 물리 모델링 3D ASMR 오디오 합성 엔진 (Ultra-Hi-Fi Procedural Audio)
 // ============================================================================
 class AudioSynth {
   constructor() {
@@ -28,133 +28,201 @@ class AudioSynth {
     return this.muted;
   }
 
-  // 1-1. 실제 왁스 코팅이 으스러지는 '꽈자작! 꽈득! 아작아작' 리얼 크런치 사운드
-  // (각 왁뿌별 파라미터를 다르게 하여 오가닉하고 독창적인 파열음 구현)
-  playCrunch(type = 'apple', pitchMultiplier = 1.0) {
+  // 3D 입체 공간 오디오 설정을 위한 PannerNode 생성 및 리스너 배치
+  createPanner(now, position) {
+    if (!this.ctx) return null;
+
+    // 카메라 위치(0, 0, 8)에 가깝게 오디오 리스너 배치
+    const listener = this.ctx.listener;
+    if (listener) {
+      if (listener.positionX) {
+        listener.positionX.setValueAtTime(0, now);
+        listener.positionY.setValueAtTime(0, now);
+        listener.positionZ.setValueAtTime(8, now);
+        listener.forwardX.setValueAtTime(0, now);
+        listener.forwardY.setValueAtTime(0, now);
+        listener.forwardZ.setValueAtTime(-1, now);
+        listener.upX.setValueAtTime(0, now);
+        listener.upY.setValueAtTime(1, now);
+        listener.upZ.setValueAtTime(0, now);
+      } else {
+        listener.setPosition(0, 0, 8);
+        listener.setOrientation(0, 0, -1, 0, 1, 0);
+      }
+    }
+
+    const panner = this.ctx.createPanner();
+    panner.panningModel = 'HRTF'; // 입체 음향 HRTF 채택
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1.0;
+    panner.maxDistance = 100.0;
+    panner.rolloffFactor = 1.0;
+
+    if (position) {
+      panner.positionX.setValueAtTime(position.x, now);
+      panner.positionY.setValueAtTime(position.y, now);
+      panner.positionZ.setValueAtTime(position.z, now);
+    } else {
+      panner.positionX.setValueAtTime(0, now);
+      panner.positionY.setValueAtTime(0, now);
+      panner.positionZ.setValueAtTime(0, now);
+    }
+    return panner;
+  }
+
+  // 1-1. 입기형 파쇄 클라우드 + 공진 필터 뱅크 기반 크런치 사운드
+  playCrunch(type = 'apple', pitchMultiplier = 1.0, position = null) {
     if (this.muted || !this.ctx) return;
     this.resume();
 
     const now = this.ctx.currentTime;
+    const panner = this.createPanner(now, position);
 
     // 각 타입별 맞춤형 물리음향 파라미터 세팅
-    let snapFreq = 450;
-    let snapQ = 4;
-    let snapGainVal = 0.7;
-    let snapDecay = 0.06;
-    
-    let crackleCount = 4 + Math.floor(Math.random() * 4);
-    let crackleMinFreq = 1100;
-    let crackleMaxFreq = 1700;
-    let crackleGainVal = 0.35;
-    let crackleDecay = 0.012;
-    let crackleDelayMult = 0.012;
+    let baseFreq = 400;
+    let decay = 0.08;
+    let gainVal = 0.8;
+    let crackleCount = 25; // 더 빽빽하고 선명한 꽈드득 소리를 위해 증가
+    let crackleDecay = 0.015;
+    let crackleGain = 0.4;
+    let crackleDelaySpread = 0.12; // 120ms 동안 분산
+    let resonators = [1, 2, 4]; // 고조파 공진 주파수 배수
 
     if (type === 'apple') {
-      snapFreq = 500;
-      snapQ = 5;
-      snapGainVal = 0.75;
-      snapDecay = 0.05;
-      crackleCount = 6 + Math.floor(Math.random() * 4); // 바삭하게 잔글씨가 많이 나는 청사과
-      crackleMinFreq = 1300;
-      crackleMaxFreq = 1900;
-    } else if (type === 'butter') {
-      snapFreq = 260; // 둔탁하게 밀리면서 뭉개지는 소리
-      snapQ = 2.5;
-      snapGainVal = 0.85;
-      snapDecay = 0.09;
-      crackleCount = 2 + Math.floor(Math.random() * 2); // 잔크랙 소리 적게
-      crackleMinFreq = 700;
-      crackleMaxFreq = 1100;
-      crackleGainVal = 0.2;
-    } else if (type === 'balloon') {
-      snapFreq = 700; // 아주 가볍고 탄탄한 막 터지는 소리
-      snapQ = 6;
-      snapGainVal = 0.65;
-      snapDecay = 0.04;
-      crackleCount = 4 + Math.floor(Math.random() * 3);
-      crackleMinFreq = 1600;
-      crackleMaxFreq = 2300;
-      crackleGainVal = 0.45;
+      // 청사과: 파사삭 아삭하고 맑은 깨짐음 (고음부 중심 공진)
+      baseFreq = 380;
+      decay = 0.07;
+      gainVal = 0.85;
+      crackleCount = 28;
       crackleDecay = 0.008;
+      crackleGain = 0.45;
+      crackleDelaySpread = 0.09;
+      resonators = [1, 2.2, 3.8, 5.5];
+    } else if (type === 'butter') {
+      // 3레이어 버터: 서석서석 밀리며 무겁게 깨지는 소리 (중저음 중심 공진)
+      baseFreq = 180;
+      decay = 0.15;
+      gainVal = 0.9;
+      crackleCount = 20;
+      crackleDecay = 0.025;
+      crackleGain = 0.3;
+      crackleDelaySpread = 0.18;
+      resonators = [1, 1.5, 2.1, 3.0];
+    } else if (type === 'balloon') {
+      // 크리스피 미니: 팽팽한 풍선막이 터지며 경쾌하게 깨지는 소리 (매우 날카로운 고음)
+      baseFreq = 550;
+      decay = 0.05;
+      gainVal = 0.7;
+      crackleCount = 22;
+      crackleDecay = 0.006;
+      crackleGain = 0.5;
+      crackleDelaySpread = 0.08;
+      resonators = [1, 2.5, 4.5, 6.0];
     } else if (type === 'choco') {
-      snapFreq = 190; // 낮고 무겁게 툭 부서지는 초코 덩어리
-      snapQ = 3;
-      snapGainVal = 0.95;
-      snapDecay = 0.12;
-      crackleCount = 3 + Math.floor(Math.random() * 3);
-      crackleMinFreq = 550;
-      crackleMaxFreq = 850;
-      crackleGainVal = 0.3;
+      // 초코 바나나: 두껍고 딱딱한 초콜릿이 툭! 부서지는 묵직한 소리 (저음 중심의 강한 타격감)
+      baseFreq = 120;
+      decay = 0.18;
+      gainVal = 1.1;
+      crackleCount = 24;
       crackleDecay = 0.02;
+      crackleGain = 0.35;
+      crackleDelaySpread = 0.15;
+      resonators = [1, 1.8, 2.6, 3.5];
     }
 
     // -------------------------------------------------------------
-    // 레이어 A: '꽈득!' 둔탁하게 부서지는 왁스 본체의 저주파 타격음 (Dull Snap)
+    // 레이어 A: 공진 필터 뱅크 (Resonator Filter Bank) - 묵직한 바디 타격음
     // -------------------------------------------------------------
-    const snapBufferSize = this.ctx.sampleRate * snapDecay;
-    const snapBuffer = this.ctx.createBuffer(1, snapBufferSize, this.ctx.sampleRate);
-    const snapData = snapBuffer.getChannelData(0);
-    for (let i = 0; i < snapBufferSize; i++) {
-      snapData[i] = Math.random() * 2 - 1;
+    const noiseBufferSize = this.ctx.sampleRate * decay;
+    const noiseBuffer = this.ctx.createBuffer(1, noiseBufferSize, this.ctx.sampleRate);
+    const noiseData = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < noiseBufferSize; i++) {
+      const t = i / noiseBufferSize;
+      noiseData[i] = (Math.random() * 2 - 1) * (1.0 - t);
     }
-    const snapSource = this.ctx.createBufferSource();
-    snapSource.buffer = snapBuffer;
+    const noiseSource = this.ctx.createBufferSource();
+    noiseSource.buffer = noiseBuffer;
 
-    const snapFilter = this.ctx.createBiquadFilter();
-    snapFilter.type = 'bandpass';
-    snapFilter.frequency.setValueAtTime(snapFreq * pitchMultiplier, now);
-    snapFilter.Q.setValueAtTime(snapQ, now);
+    const filterGainNode = this.ctx.createGain();
+    filterGainNode.gain.setValueAtTime(gainVal, now);
+    filterGainNode.gain.exponentialRampToValueAtTime(0.001, now + decay);
 
-    const snapGain = this.ctx.createGain();
-    snapGain.gain.setValueAtTime(snapGainVal, now);
-    snapGain.gain.exponentialRampToValueAtTime(0.001, now + snapDecay - 0.01);
+    resonators.forEach((ratio, idx) => {
+      const resonanceFreq = baseFreq * ratio * pitchMultiplier;
+      const bpFilter = this.ctx.createBiquadFilter();
+      bpFilter.type = 'bandpass';
+      bpFilter.frequency.setValueAtTime(resonanceFreq, now);
+      bpFilter.Q.setValueAtTime(idx === 0 ? 12 : 8, now); 
 
-    snapSource.connect(snapFilter);
-    snapFilter.connect(snapGain);
-    snapGain.connect(this.ctx.destination);
-    snapSource.start(now);
-    snapSource.stop(now + snapDecay);
+      noiseSource.connect(bpFilter);
+      bpFilter.connect(filterGainNode);
+    });
+
+    if (panner) {
+      filterGainNode.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      filterGainNode.connect(this.ctx.destination);
+    }
+    noiseSource.start(now);
+    noiseSource.stop(now + decay);
 
     // -------------------------------------------------------------
-    // 레이어 B: '꽈자작! 아작!' 표면이 여러 갈래로 쩍쩍 쪼개지는 파열음
+    // 레이어 B: 물리 모델링 파쇄 클라우드 (Micro Clicks & Sine Sweeps)
     // -------------------------------------------------------------
     for (let i = 0; i < crackleCount; i++) {
-      const delay = i * crackleDelayMult + Math.random() * 0.015;
-      
-      const impulseBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * crackleDecay, this.ctx.sampleRate);
-      const impulseData = impulseBuffer.getChannelData(0);
-      for (let j = 0; j < impulseData.length; j++) {
-        impulseData[j] = Math.random() * 2 - 1;
+      const delay = (i / crackleCount) * crackleDelaySpread + Math.random() * 0.015;
+      const crackTime = now + delay;
+
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+
+      const startF = (baseFreq * (2.5 + Math.random() * 3.5)) * pitchMultiplier;
+      const endF = startF * 0.4;
+      osc.frequency.setValueAtTime(startF, crackTime);
+      osc.frequency.exponentialRampToValueAtTime(endF, crackTime + crackleDecay);
+
+      const clickGain = this.ctx.createGain();
+      clickGain.gain.setValueAtTime(crackleGain * (0.4 + Math.random() * 0.6), crackTime);
+      clickGain.gain.exponentialRampToValueAtTime(0.001, crackTime + crackleDecay);
+
+      const clickBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.002, this.ctx.sampleRate);
+      const clickBufData = clickBuffer.getChannelData(0);
+      for (let j = 0; j < clickBufData.length; j++) {
+        clickBufData[j] = Math.random() * 2 - 1;
       }
-      const impulseSource = this.ctx.createBufferSource();
-      impulseSource.buffer = impulseBuffer;
+      const clickSource = this.ctx.createBufferSource();
+      clickSource.buffer = clickBuffer;
 
-      const impulseFilter = this.ctx.createBiquadFilter();
-      impulseFilter.type = 'bandpass';
-      impulseFilter.frequency.setValueAtTime((crackleMinFreq + Math.random() * (crackleMaxFreq - crackleMinFreq)) * pitchMultiplier, now + delay);
-      impulseFilter.Q.setValueAtTime(8, now + delay);
+      const clickFilter = this.ctx.createBiquadFilter();
+      clickFilter.type = 'highpass';
+      clickFilter.frequency.setValueAtTime(2500, crackTime);
 
-      const impulseGain = this.ctx.createGain();
-      impulseGain.gain.setValueAtTime(crackleGainVal, now + delay);
-      impulseGain.gain.exponentialRampToValueAtTime(0.001, now + delay + crackleDecay - 0.002);
+      osc.connect(clickGain);
+      clickSource.connect(clickFilter);
+      clickFilter.connect(clickGain);
 
-      impulseSource.connect(impulseFilter);
-      impulseFilter.connect(impulseGain);
-      impulseGain.connect(this.ctx.destination);
+      if (panner) {
+        clickGain.connect(panner);
+      } else {
+        clickGain.connect(this.ctx.destination);
+      }
 
-      impulseSource.start(now + delay);
-      impulseSource.stop(now + delay + crackleDecay + 0.01);
+      osc.start(crackTime);
+      osc.stop(crackTime + crackleDecay + 0.002);
+      clickSource.start(crackTime);
+      clickSource.stop(crackTime + 0.003);
     }
   }
 
-  // 1-2. 왁스 껍질이 최종적으로 통째로 터질 때의 둔탁한 팝핑 사운드 (Final Burst)
-  playPop(freq = 120) {
+  // 1-2. 최종 파열 팝 사운드
+  playPop(freq = 120, position = null) {
     if (this.muted || !this.ctx) return;
     this.resume();
 
     const now = this.ctx.currentTime;
+    const panner = this.createPanner(now, position);
 
-    // 묵직한 고무/플라스틱 막 터지는 소리
     const osc = this.ctx.createOscillator();
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(freq, now);
@@ -170,9 +238,13 @@ class AudioSynth {
 
     osc.connect(lowpass);
     lowpass.connect(gain);
-    gain.connect(this.ctx.destination);
+    if (panner) {
+      gain.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      gain.connect(this.ctx.destination);
+    }
 
-    // 퍽 터지며 흩어지는 둔탁한 공기 파열 마찰음 (머리 아픈 고음 차단)
     const noiseBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.2, this.ctx.sampleRate);
     const noiseData = noiseBuffer.getChannelData(0);
     for (let i = 0; i < noiseData.length; i++) {
@@ -183,7 +255,7 @@ class AudioSynth {
 
     const noiseFilter = this.ctx.createBiquadFilter();
     noiseFilter.type = 'lowpass';
-    noiseFilter.frequency.setValueAtTime(600, now); // 고역 차단하여 먹먹하고 묵직하게
+    noiseFilter.frequency.setValueAtTime(600, now); 
 
     const noiseGain = this.ctx.createGain();
     noiseGain.gain.setValueAtTime(0.5, now);
@@ -191,7 +263,11 @@ class AudioSynth {
 
     noise.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
-    noiseGain.connect(this.ctx.destination);
+    if (panner) {
+      noiseGain.connect(panner);
+    } else {
+      noiseGain.connect(this.ctx.destination);
+    }
 
     osc.start(now);
     osc.stop(now + 0.31);
@@ -200,11 +276,13 @@ class AudioSynth {
   }
 
   // 1-3. 미니 왁볼 개별 파쇄음
-  playMiniPop() {
+  playMiniPop(position = null) {
     if (this.muted || !this.ctx) return;
     this.resume();
 
     const now = this.ctx.currentTime;
+    const panner = this.createPanner(now, position);
+
     const osc = this.ctx.createOscillator();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(550, now);
@@ -215,41 +293,76 @@ class AudioSynth {
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
 
     osc.connect(gainNode);
-    gainNode.connect(this.ctx.destination);
+    if (panner) {
+      gainNode.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      gainNode.connect(this.ctx.destination);
+    }
 
     osc.start(now);
     osc.stop(now + 0.11);
   }
 
-  // 1-4. 점토/클레이를 으깨고 쪼물딱거릴 때 나는 리얼한 '쩍쩍, 질퍽한' 기포 사운드 (Wet Clay Squelch)
-  // (음질이 나쁜 비디오의 바람 소리 같은 저주파 노이즈를 없애고, 쫀득하고 찰진 반죽 뭉침과 기포 파열음 위주로 재구성)
-  playSquelch(intensity = 0.5) {
+  // 1-4. 미니 벌룬 비드간 충돌/마찰음
+  playBeadTap(position = null) {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const panner = this.createPanner(now, position);
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(750 + Math.random() * 250, now);
+    osc.frequency.exponentialRampToValueAtTime(350, now + 0.025);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
+
+    osc.connect(gain);
+    if (panner) {
+      gain.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      gain.connect(this.ctx.destination);
+    }
+    osc.start(now);
+    osc.stop(now + 0.03);
+  }
+
+  // 1-5. 극저역 서브베이스 + 입기형 기포 기차 기반 찰진 반죽 Squelch
+  playSquelch(intensity = 0.5, position = null) {
     if (this.muted || !this.ctx) return;
     
     const now = this.ctx.currentTime;
+    const panner = this.createPanner(now, position);
 
-    // 1) 점토가 비벼질 때의 묵직한 물리적 저음 (Doughy thud oscillator)
-    // 노이즈 필터링 방식 대신 부드러운 삼각파 주파수 스윕을 사용하여 바람 소리(Hiss) 유발을 완전히 방지합니다.
+    // A) 극저역 서브베이스 레이어 (Sub-bass Weight Layer, 40-70Hz)
     const oscDough = this.ctx.createOscillator();
     oscDough.type = 'triangle';
-    oscDough.frequency.setValueAtTime(80 + intensity * 30, now);
-    oscDough.frequency.exponentialRampToValueAtTime(35, now + 0.12);
+    oscDough.frequency.setValueAtTime(55 + intensity * 15, now);
+    oscDough.frequency.exponentialRampToValueAtTime(32, now + 0.15);
 
     const doughFilter = this.ctx.createBiquadFilter();
     doughFilter.type = 'lowpass';
-    doughFilter.frequency.setValueAtTime(100, now);
+    doughFilter.frequency.setValueAtTime(75, now);
 
     const doughGain = this.ctx.createGain();
-    doughGain.gain.setValueAtTime(0.2 * intensity, now);
-    doughGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    doughGain.gain.setValueAtTime(0.35 * intensity, now);
+    doughGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
 
     oscDough.connect(doughFilter);
     doughFilter.connect(doughGain);
-    doughGain.connect(this.ctx.destination);
+    if (panner) {
+      doughGain.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      doughGain.connect(this.ctx.destination);
+    }
     oscDough.start(now);
-    oscDough.stop(now + 0.13);
+    oscDough.stop(now + 0.16);
 
-    // 극소량의 젖은 수분 마찰만 보조적으로 주입 (매우 좁은 밴드패스 필터링 및 극도의 볼륨 감소로 바람 소리 제거)
+    // B) 수분 마찰 대역 (초극소 볼륨 밴드패스)
     const frictionBuffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.06, this.ctx.sampleRate);
     const frictionData = frictionBuffer.getChannelData(0);
     for (let i = 0; i < frictionData.length; i++) {
@@ -260,59 +373,66 @@ class AudioSynth {
 
     const frictionFilter = this.ctx.createBiquadFilter();
     frictionFilter.type = 'bandpass';
-    frictionFilter.frequency.setValueAtTime(250, now); // 250Hz 수분 마찰 대역
-    frictionFilter.Q.setValueAtTime(3.5, now);
+    frictionFilter.frequency.setValueAtTime(250, now); 
+    frictionFilter.Q.setValueAtTime(4.0, now);
 
     const frictionGain = this.ctx.createGain();
-    frictionGain.gain.setValueAtTime(0.04 * intensity, now);
+    frictionGain.gain.setValueAtTime(0.03 * intensity, now);
     frictionGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
 
     frictionSource.connect(frictionFilter);
     frictionFilter.connect(frictionGain);
-    frictionGain.connect(this.ctx.destination);
+    if (panner) {
+      frictionGain.connect(panner);
+    } else {
+      frictionGain.connect(this.ctx.destination);
+    }
     frictionSource.start(now);
     frictionSource.stop(now + 0.06);
 
-    // 2) 찰떡을 쥘 때 끈적하게 기포가 쩍쩍 터지는 사운드 (Wet Sticky Micro-Pops)
-    // 개수를 늘리고 볼륨을 높여 점토가 뭉치는 질감이 귀에 더 또렷이 들리도록 함
-    const bubbleCount = 4 + Math.floor(Math.random() * 4); // 4~7개 기포
+    // C) 입기형 기포 기차 (Granular Bubble Train)
+    const bubbleCount = 4 + Math.floor(Math.random() * 5); 
     for (let i = 0; i < bubbleCount; i++) {
-      const bubbleDelay = i * 0.015 + Math.random() * 0.02;
+      const bubbleDelay = i * 0.012 + Math.random() * 0.015;
       
       const osc = this.ctx.createOscillator();
       osc.type = 'sine'; 
       
-      const startFreq = 220 + Math.random() * 120;
+      const startFreq = 220 + Math.random() * 150;
       osc.frequency.setValueAtTime(startFreq, now + bubbleDelay);
-      osc.frequency.exponentialRampToValueAtTime(45, now + bubbleDelay + 0.015);
+      osc.frequency.exponentialRampToValueAtTime(45, now + bubbleDelay + 0.018);
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(420, now + bubbleDelay); // 320Hz -> 420Hz 기포 선명도 증가
+      filter.frequency.setValueAtTime(450, now + bubbleDelay);
 
       const gainNode = this.ctx.createGain();
-      const targetGain = (0.12 + Math.random() * 0.08) * intensity; // 찰진 쩍쩍 소리 증폭
+      const targetGain = (0.15 + Math.random() * 0.08) * intensity;
       gainNode.gain.setValueAtTime(0.001, now + bubbleDelay);
       gainNode.gain.linearRampToValueAtTime(targetGain, now + bubbleDelay + 0.003);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, now + bubbleDelay + 0.015);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + bubbleDelay + 0.018);
 
       osc.connect(filter);
       filter.connect(gainNode);
-      gainNode.connect(this.ctx.destination);
+      if (panner) {
+        gainNode.connect(panner);
+      } else {
+        gainNode.connect(this.ctx.destination);
+      }
 
       osc.start(now + bubbleDelay);
       osc.stop(now + bubbleDelay + 0.02);
     }
   }
 
-  // 1-5. 점토 반죽을 당겼다 놓았을 때 찰싹! 얹어지는 타격 찰떡 사운드 (Wet Slap)
-  playSlap(intensity = 0.5) {
+  // 1-6. 반죽 놓을 때 찰싹 달라붙는 찰떡 슬랩 사운드
+  playSlap(intensity = 0.5, position = null) {
     if (this.muted || !this.ctx) return;
     this.resume();
 
     const now = this.ctx.currentTime;
+    const panner = this.createPanner(now, position);
 
-    // 1) 찰떡 덩어리가 엉겨 붙으며 나는 묵직한 '쩍-' 소리
     const osc = this.ctx.createOscillator();
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(100, now);
@@ -323,14 +443,18 @@ class AudioSynth {
     filter.frequency.setValueAtTime(140, now);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.55 * intensity, now);
+    gain.gain.setValueAtTime(0.65 * intensity, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 
     osc.connect(filter);
     filter.connect(gain);
-    gain.connect(this.ctx.destination);
+    if (panner) {
+      gain.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      gain.connect(this.ctx.destination);
+    }
 
-    // 2) 찰싹 달라붙는 표면 습기 찰싹음
     const slapBufferSize = this.ctx.sampleRate * 0.06;
     const slapBuffer = this.ctx.createBuffer(1, slapBufferSize, this.ctx.sampleRate);
     const slapData = slapBuffer.getChannelData(0);
@@ -342,16 +466,20 @@ class AudioSynth {
 
     const slapFilter = this.ctx.createBiquadFilter();
     slapFilter.type = 'bandpass';
-    slapFilter.frequency.setValueAtTime(380, now); // 380Hz 부근의 축축한 마찰대역
+    slapFilter.frequency.setValueAtTime(380, now); 
     slapFilter.Q.setValueAtTime(2, now);
 
     const slapGain = this.ctx.createGain();
-    slapGain.gain.setValueAtTime(0.35 * intensity, now);
+    slapGain.gain.setValueAtTime(0.4 * intensity, now);
     slapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
 
     slapSource.connect(slapFilter);
     slapFilter.connect(slapGain);
-    slapGain.connect(this.ctx.destination);
+    if (panner) {
+      slapGain.connect(panner);
+    } else {
+      slapGain.connect(this.ctx.destination);
+    }
 
     osc.start(now);
     osc.stop(now + 0.07);
@@ -364,480 +492,482 @@ const audio = new AudioSynth();
 
 
 // ============================================================================
-// 2. 물리 입자 시스템 (Physics Particle System for Debris)
+// 2. 3D 입자 물리 시스템 (3D Physical Debris Particles)
 // ============================================================================
-class Particle {
-  constructor(x, y, color, size, type = 'normal') {
-    this.x = x;
-    this.y = y;
+class Particle3D {
+  constructor(scene, pos, color, size, type = 'normal') {
+    this.scene = scene;
+    this.type = type;
     this.color = color;
     this.size = size;
-    this.type = type;
-    
+
+    let geo;
+    if (type === 'apple') {
+      geo = new THREE.BoxGeometry(size * 1.6, size * 0.8, size * 0.4);
+    } else if (type === 'star') {
+      geo = new THREE.ConeGeometry(size, size * 1.5, 4);
+    } else if (type === 'flake') {
+      geo = new THREE.BoxGeometry(size * 1.4, size * 1.4, size * 0.15);
+    } else {
+      geo = new THREE.SphereGeometry(size, 6, 6);
+    }
+
+    let mat;
+    if (type === 'apple') {
+      mat = new THREE.MeshStandardMaterial({ color: 0xf87171, roughness: 0.3 }); 
+    } else if (type === 'star') {
+      mat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.1, metalness: 0.8 }); 
+    } else {
+      mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.4, metalness: 0.1 });
+    }
+
+    this.mesh = new THREE.Mesh(geo, mat);
+    this.mesh.position.copy(pos);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    this.scene.add(this.mesh);
+
     const angle = Math.random() * Math.PI * 2;
-    const speed = 1.8 + Math.random() * 5.2;
-    this.vx = Math.cos(angle) * speed;
-    this.vy = Math.sin(angle) * speed - 2.0; 
-    
-    this.gravity = 0.28;
+    const speed = 2.0 + Math.random() * 4.5;
+    this.vx = Math.cos(angle) * speed * 0.7;
+    this.vy = 3.0 + Math.random() * 5.0; 
+    this.vz = (Math.random() - 0.5) * speed * 0.7;
+
+    this.gravity = -0.22;
     this.friction = 0.97;
     this.bounce = 0.45;
     this.life = 1.0;
-    this.decay = 0.012 + Math.random() * 0.018;
-    
-    this.rotation = Math.random() * Math.PI * 2;
-    this.vRotation = (Math.random() - 0.5) * 0.3;
+    this.decay = 0.012 + Math.random() * 0.016;
+
+    this.mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+    this.vRot = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.15,
+      (Math.random() - 0.5) * 0.15,
+      (Math.random() - 0.5) * 0.15
+    );
   }
 
-  update(width, height) {
+  update() {
     this.vy += this.gravity;
     this.vx *= this.friction;
     this.vy *= this.friction;
-    
-    this.x += this.vx;
-    this.y += this.vy;
-    this.rotation += this.vRotation;
-    
+    this.vz *= this.friction;
+
+    this.mesh.position.x += this.vx * 0.05;
+    this.mesh.position.y += this.vy * 0.05;
+    this.mesh.position.z += this.vz * 0.05;
+
+    this.mesh.rotation.x += this.vRot.x;
+    this.mesh.rotation.y += this.vRot.y;
+    this.mesh.rotation.z += this.vRot.z;
+
     this.life -= this.decay;
+    const scale = Math.max(0.001, this.life);
+    this.mesh.scale.set(scale, scale, scale);
 
-    if (this.y > height - this.size) {
-      this.y = height - this.size;
+    if (this.mesh.position.y < -3.2) {
+      this.mesh.position.y = -3.2;
       this.vy = -this.vy * this.bounce;
-      this.vx *= 0.7;
-    }
-    if (this.x < this.size) {
-      this.x = this.size;
-      this.vx = -this.vx * this.bounce;
-    } else if (this.x > width - this.size) {
-      this.x = width - this.size;
-      this.vx = -this.vx * this.bounce;
+      this.vx *= 0.6;
+      this.vz *= 0.6;
     }
   }
 
-  draw(ctx) {
-    ctx.save();
-    ctx.translate(this.x, this.y);
-    ctx.rotate(this.rotation);
-    ctx.globalAlpha = Math.max(0, this.life);
-    ctx.fillStyle = this.color;
-
-    if (this.type === 'normal') {
-      ctx.beginPath();
-      ctx.arc(0, 0, this.size, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (this.type === 'flake') {
-      ctx.fillRect(-this.size, -this.size * 0.6, this.size * 2, this.size * 1.2);
-    } else if (this.type === 'apple') {
-      ctx.fillStyle = '#ff3366';
-      ctx.beginPath();
-      ctx.arc(0, 0, this.size, 0, Math.PI, true);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#76ff03';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else if (this.type === 'star') {
-      ctx.fillStyle = '#ffd700';
-      ctx.beginPath();
-      for (let i = 0; i < 5; i++) {
-        ctx.lineTo(Math.cos((18 + i * 72) * Math.PI / 180) * this.size,
-                   Math.sin((18 + i * 72) * Math.PI / 180) * this.size);
-        ctx.lineTo(Math.cos((54 + i * 72) * Math.PI / 180) * (this.size / 2),
-                   Math.sin((54 + i * 72) * Math.PI / 180) * (this.size / 2));
-      }
-      ctx.closePath();
-      ctx.fill();
-    }
-    ctx.restore();
+  destroy() {
+    this.scene.remove(this.mesh);
+    this.mesh.geometry.dispose();
+    this.mesh.material.dispose();
   }
 }
 
-
-// Color interpolation helper for melting shards
-function interpolateColor(color1, color2, factor) {
-  // Hex to RGB
-  const r1 = parseInt(color1.substring(1, 3), 16);
-  const g1 = parseInt(color1.substring(3, 5), 16);
-  const b1 = parseInt(color1.substring(5, 7), 16);
-
-  const r2 = parseInt(color2.substring(1, 3), 16);
-  const g2 = parseInt(color2.substring(3, 5), 16);
-  const b2 = parseInt(color2.substring(5, 7), 16);
-
-  const r = Math.round(r1 + (r2 - r1) * factor);
-  const g = Math.round(g1 + (g2 - g1) * factor);
-  const b = Math.round(b1 + (b2 - b1) * factor);
-
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
 
 // ============================================================================
-// 3. 점떡같이 쫀쫀하고 질퍽한 소프트바디 반죽 엔진 (Doughy Soft-Body Physics)
+// 3. 3차원 탄성 질점-스프링 소프트바디 반죽 엔진 (3D Soft-Body Physics)
 // ============================================================================
-class SoftBodyParticle {
-  constructor(x, y, isCenter = false) {
-    this.x = x;
-    this.y = y;
-    this.vx = 0;
-    this.vy = 0;
-    this.isCenter = isCenter;
+class SoftBodyParticle3D {
+  constructor(x, y, z) {
+    this.pos = new THREE.Vector3(x, y, z);
+    this.originalPos = new THREE.Vector3(x, y, z);
+    this.vel = new THREE.Vector3();
+    this.force = new THREE.Vector3();
   }
 }
 
-class SoftBody {
-  constructor(x, y, radius, color, shardColor, shardCount, toppings = []) {
-    this.x = x;
-    this.y = y;
+class SoftBody3D {
+  constructor(scene, shapeType, radius, color, shardColor, shardCount, toppings = []) {
+    this.scene = scene;
     this.radius = radius;
     this.color = color;
     this.shardColor = shardColor;
     
     this.particles = [];
     this.springs = [];
-    
-    // 극단의 찰떡 질감을 구현하기 위한 탄성 계수 최적화
-    this.kCenter = 0.015;
-    this.kEdge = 0.32;
-    this.damping = 0.65;
-    this.gravity = 0.03;
+    this.toppingsList = [];
+
+    this.kCenter = 0.015; 
+    this.kEdge = 0.28;    
+    this.damping = 0.64;  
+    this.gravity = 0.0; 
 
     this.draggedParticleIdx = -1;
 
-    // 조각 융해/합일 옵션
     this.meltShards = false;
     this.baseColor = color;
     this.targetColor = color;
+    this.shardsOpacity = 1.0;
 
-    this.init(x, y, radius);
-    this.initShards(shardCount, toppings);
+    this.init(shapeType, radius);
+    this.initToppings(shardCount, toppings);
   }
 
-  init(cx, cy, r) {
-    const center = new SoftBodyParticle(cx, cy, true);
-    this.particles.push(center);
+  init(shapeType, r) {
+    if (shapeType === 'box') {
+      this.geometry = new THREE.BoxGeometry(2.2, 0.9, 0.9, 5, 2, 2);
+    } else {
+      this.geometry = new THREE.SphereGeometry(r, 12, 10);
+    }
+    
+    this.material = new THREE.MeshStandardMaterial({
+      color: this.color,
+      roughness: 0.22,
+      metalness: 0.02,
+      transparent: true,
+      opacity: 1.0
+    });
 
-    const points = 16;
-    for (let i = 0; i < points; i++) {
-      const angle = (i / points) * Math.PI * 2;
-      const px = cx + Math.cos(angle) * r;
-      const py = cy + Math.sin(angle) * r;
-      this.particles.push(new SoftBodyParticle(px, py));
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    this.scene.add(this.mesh);
+
+    const posAttr = this.geometry.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      const px = posAttr.getX(i);
+      const py = posAttr.getY(i);
+      const pz = posAttr.getZ(i);
+      this.particles.push(new SoftBodyParticle3D(px, py, pz));
     }
 
-    for (let i = 1; i <= points; i++) {
-      this.springs.push({
-        p1: 0,
-        p2: i,
-        length: r
-      });
+    const index = this.geometry.index;
+    const addSpring = (i1, i2) => {
+      if (this.springs.some(s => (s.i1 === i1 && s.i2 === i2) || (s.i1 === i2 && s.i2 === i1))) return;
+      const p1 = this.particles[i1];
+      const p2 = this.particles[i2];
+      const restLength = p1.originalPos.distanceTo(p2.originalPos);
+      this.springs.push({ i1, i2, restLength });
+    };
+
+    if (index) {
+      for (let i = 0; i < index.count; i += 3) {
+        const a = index.array[i];
+        const b = index.array[i+1];
+        const c = index.array[i+2];
+        addSpring(a, b);
+        addSpring(b, c);
+        addSpring(c, a);
+      }
+    } else {
+      for (let i = 0; i < posAttr.count; i += 3) {
+        addSpring(i, i+1);
+        addSpring(i+1, i+2);
+        addSpring(i+2, i);
+      }
     }
-    for (let i = 1; i <= points; i++) {
-      const next = i === points ? 1 : i + 1;
-      const angleStep = (Math.PI * 2) / points;
-      const edgeLen = 2 * r * Math.sin(angleStep / 2);
-      this.springs.push({
-        p1: i,
-        p2: next,
-        length: edgeLen
-      });
-      
-      const diagonalNext = i + 4 > points ? i + 4 - points : i + 4;
-      const diagLen = 2 * r * Math.sin((angleStep * 4) / 2);
-      this.springs.push({
-        p1: i,
-        p2: diagonalNext,
-        length: diagLen * 0.95
-      });
+
+    for (let i = 0; i < this.particles.length; i++) {
+      for (let j = i + 1; j < this.particles.length; j++) {
+        const dist = this.particles[i].originalPos.distanceTo(this.particles[j].originalPos);
+        if (dist > r * 1.5) {
+          this.springs.push({ i1: i, i2: j, restLength: dist * 0.95, isCross: true });
+        }
+      }
     }
   }
 
-  initShards(count, toppings) {
-    this.shards = [];
+  initToppings(count, toppings) {
     for (let i = 0; i < count; i++) {
-      const pIndex = 1 + Math.floor(Math.random() * (this.particles.length - 1));
-      const ratio = 0.12 + Math.random() * 0.78; 
-      const angleOffset = (Math.random() - 0.5) * 0.45;
-      const size = 6 + Math.random() * 11;
-      
-      this.shards.push({
-        pIndex,
-        ratio,
-        angleOffset,
-        size,
-        color: Array.isArray(this.shardColor) ? this.shardColor[Math.floor(Math.random() * this.shardColor.length)] : this.shardColor,
-        type: toppings.length > 0 ? toppings[Math.floor(Math.random() * toppings.length)] : 'normal',
-        opacity: 1.0
+      const pIdx = Math.floor(Math.random() * this.particles.length);
+      const toppingType = toppings.length > 0 ? toppings[Math.floor(Math.random() * toppings.length)] : 'normal';
+
+      let size = 0.12 + Math.random() * 0.15;
+      let geo;
+      if (toppingType === 'apple') {
+        geo = new THREE.BoxGeometry(size * 1.5, size * 0.8, size * 0.3);
+      } else if (toppingType === 'star') {
+        geo = new THREE.ConeGeometry(size, size * 1.4, 4);
+      } else if (toppingType === 'flake') {
+        geo = new THREE.BoxGeometry(size * 1.3, size * 1.3, size * 0.1);
+      } else {
+        geo = new THREE.SphereGeometry(size, 5, 5);
+      }
+
+      let color = Array.isArray(this.shardColor) ? this.shardColor[Math.floor(Math.random() * this.shardColor.length)] : this.shardColor;
+      let mat;
+      if (toppingType === 'apple') {
+        mat = new THREE.MeshStandardMaterial({ color: 0xf87171, roughness: 0.3 }); 
+      } else if (toppingType === 'star') {
+        mat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.1, metalness: 0.8 }); 
+      } else if (toppingType === 'flake') {
+        mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+      } else {
+        mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.4 });
+      }
+
+      const topMesh = new THREE.Mesh(geo, mat);
+      topMesh.castShadow = true;
+      this.scene.add(topMesh);
+
+      this.toppingsList.push({
+        mesh: topMesh,
+        pIndex: pIdx,
+        offsetDir: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize().multiplyScalar(0.05),
+        rotOffset: new THREE.Vector3(Math.random()*6, Math.random()*6, Math.random()*6),
+        originalSize: size
       });
     }
   }
 
-  update(pointer, canvasWidth, canvasHeight) {
+  update(pointer, raycaster, targetPos) {
     const points = this.particles.length;
 
     if (pointer.active) {
       if (this.draggedParticleIdx === -1) {
-        let nearestDist = Infinity;
-        for (let i = 0; i < points; i++) {
-          const dx = this.particles[i].x - pointer.x;
-          const dy = this.particles[i].y - pointer.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < nearestDist) {
-            nearestDist = dist;
-            this.draggedParticleIdx = i;
+        const intersects = raycaster.intersectObject(this.mesh);
+        if (intersects.length > 0) {
+          const hitPt = intersects[0].point;
+          let nearestDist = Infinity;
+          for (let i = 0; i < points; i++) {
+            const dist = this.particles[i].pos.distanceTo(hitPt);
+            if (dist < nearestDist) {
+              nearestDist = dist;
+              this.draggedParticleIdx = i;
+            }
           }
         }
       }
 
       if (this.draggedParticleIdx !== -1) {
         const target = this.particles[this.draggedParticleIdx];
-        target.x = pointer.x;
-        target.y = pointer.y;
-        target.vx = 0;
-        target.vy = 0;
+        const prevPos = target.pos.clone();
+        target.pos.copy(targetPos);
+        target.vel.set(0, 0, 0);
 
-        const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-        if (dragSpeed > 2.0) {
-          audio.playSquelch(dragSpeed * 0.18); // 찰떡 질척이는 쩍쩍 사운드
+        const dragSpeed = prevPos.distanceTo(targetPos) * 20.0;
+        if (dragSpeed > 1.8) {
+          audio.playSquelch(dragSpeed * 0.16, target.pos);
           if (navigator.vibrate && Math.random() < 0.18) {
             navigator.vibrate(6);
           }
 
-          // 융해 기능 활성화 시 조각을 페이드아웃시키고 크기를 줄임 & 배경색 혼합
-          if (this.meltShards) {
-            let totalOpacity = 0;
-            this.shards.forEach(shard => {
-              shard.opacity -= dragSpeed * 0.0018; // 반죽 속도에 비례해 융합 진행
-              if (shard.opacity < 0) shard.opacity = 0;
-              totalOpacity += shard.opacity;
+          if (this.meltShards && this.shardsOpacity > 0) {
+            this.shardsOpacity -= dragSpeed * 0.0025;
+            if (this.shardsOpacity < 0) this.shardsOpacity = 0;
+
+            const factor = 1.0 - this.shardsOpacity;
+            this.material.color.copy(new THREE.Color(interpolateColor(this.baseColor, this.targetColor, factor)));
+
+            this.toppingsList.forEach(t => {
+              const sc = Math.max(0.001, t.originalSize * this.shardsOpacity);
+              t.mesh.scale.set(sc / t.originalSize, sc / t.originalSize, sc / t.originalSize);
+              t.mesh.material.transparent = true;
+              t.mesh.material.opacity = this.shardsOpacity;
             });
-            const avgOpacity = this.shards.length > 0 ? totalOpacity / this.shards.length : 0;
-            const factor = 1.0 - avgOpacity;
-            this.color = interpolateColor(this.baseColor, this.targetColor, factor);
           }
         }
       }
     } else {
       if (this.draggedParticleIdx !== -1) {
-        const center = this.particles[0];
         const draggedP = this.particles[this.draggedParticleIdx];
-        const distFromCenter = Math.hypot(draggedP.x - center.x, draggedP.y - center.y);
+        const distFromCenter = draggedP.pos.length(); 
         
-        if (distFromCenter > this.radius * 1.4) {
-          audio.playSlap(Math.min(distFromCenter / (this.radius * 2), 1.0)); // 당겼다 놓을 때 찰싹!
+        if (distFromCenter > this.radius * 1.35) {
+          audio.playSlap(Math.min(distFromCenter / (this.radius * 1.8), 1.0), draggedP.pos); 
           if (navigator.vibrate) navigator.vibrate(15);
         }
         this.draggedParticleIdx = -1;
       }
     }
 
-    for (let i = 0; i < this.springs.length; i++) {
-      const spring = this.springs[i];
-      const p1 = this.particles[spring.p1];
-      const p2 = this.particles[spring.p2];
-      
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist === 0) continue;
+    this.particles.forEach(p => p.force.set(0, 0, 0));
 
-      const diff = dist - spring.length;
-      const k = spring.p1 === 0 ? this.kCenter : this.kEdge;
-      const fx = (dx / dist) * diff * k;
-      const fy = (dy / dist) * diff * k;
-
-      if (spring.p1 === 0) {
-        p1.vx += fx * 0.35;
-        p1.vy += fy * 0.35;
-        p2.vx -= fx * 0.65;
-        p2.vy -= fy * 0.65;
-      } else {
-        p1.vx += fx * 0.5;
-        p1.vy += fy * 0.5;
-        p2.vx -= fx * 0.5;
-        p2.vy -= fy * 0.5;
+    this.particles.forEach(p => {
+      const d = p.pos.clone();
+      const dist = d.length();
+      const rest = p.originalPos.length();
+      if (dist > 0.01) {
+        const diff = dist - rest;
+        const f = d.normalize().multiplyScalar(-diff * this.kCenter);
+        p.force.add(f);
       }
-    }
+    });
+
+    this.springs.forEach(s => {
+      const p1 = this.particles[s.i1];
+      const p2 = this.particles[s.i2];
+      const d = p2.pos.clone().sub(p1.pos);
+      const dist = d.length();
+      if (dist > 0.01) {
+        const diff = dist - s.restLength;
+        const k = s.isCross ? 0.03 : this.kEdge;
+        const f = d.normalize().multiplyScalar(diff * k);
+        p1.force.add(f);
+        p2.force.sub(f);
+      }
+    });
 
     for (let i = 0; i < points; i++) {
       if (pointer.active && i === this.draggedParticleIdx) continue;
 
       const p = this.particles[i];
-      if (!p.isCenter) p.vy += this.gravity;
+      p.force.y += this.gravity; 
       
-      p.vx *= this.damping;
-      p.vy *= this.damping;
-      
-      p.x += p.vx;
-      p.y += p.vy;
+      p.vel.add(p.force);
+      p.vel.multiplyScalar(this.damping);
+      p.pos.add(p.vel);
 
-      const buffer = 45;
-      if (p.x < buffer) { p.x = buffer; p.vx = 0; }
-      if (p.x > canvasWidth - buffer) { p.x = canvasWidth - buffer; p.vx = 0; }
-      if (p.y < buffer) { p.y = buffer; p.vy = 0; }
-      if (p.y > canvasHeight - buffer) { p.y = canvasHeight - buffer; p.vy = 0; }
+      if (p.pos.y < -3.1) { p.pos.y = -3.1; p.vel.y = 0; }
+      if (p.pos.y > 3.1)  { p.pos.y = 3.1;  p.vel.y = 0; }
+      if (p.pos.x < -4.0) { p.pos.x = -4.0; p.vel.x = 0; }
+      if (p.pos.x > 4.0)  { p.pos.x = 4.0;  p.vel.x = 0; }
+      if (p.pos.z < -2.0) { p.pos.z = -2.0; p.vel.z = 0; }
+      if (p.pos.z > 2.0)  { p.pos.z = 2.0;  p.vel.z = 0; }
     }
+
+    const posAttr = this.geometry.attributes.position;
+    for (let i = 0; i < points; i++) {
+      posAttr.setXYZ(i, this.particles[i].pos.x, this.particles[i].pos.y, this.particles[i].pos.z);
+    }
+    posAttr.needsUpdate = true;
+    this.geometry.computeVertexNormals();
+
+    this.toppingsList.forEach(t => {
+      const p = this.particles[t.pIndex];
+      t.mesh.position.copy(p.pos).add(t.offsetDir);
+      t.mesh.rotation.set(t.rotOffset.x, t.rotOffset.y, t.rotOffset.z);
+    });
   }
 
-  draw(ctx) {
-    const pointsCount = this.particles.length - 1;
-    const center = this.particles[0];
+  destroy() {
+    this.scene.remove(this.mesh);
+    this.geometry.dispose();
+    this.material.dispose();
 
-    ctx.save();
-    ctx.fillStyle = this.color;
-    ctx.shadowBlur = 25;
-    ctx.shadowColor = 'rgba(0,0,0,0.35)';
-
-    ctx.beginPath();
-    const firstPt = this.particles[1];
-    const lastPt = this.particles[pointsCount];
-    let startX = (firstPt.x + lastPt.x) / 2;
-    let startY = (firstPt.y + lastPt.y) / 2;
-    ctx.moveTo(startX, startY);
-
-    for (let i = 1; i <= pointsCount; i++) {
-      const p = this.particles[i];
-      const nextP = this.particles[i === pointsCount ? 1 : i + 1];
-      const xc = (p.x + nextP.x) / 2;
-      const yc = (p.y + nextP.y) / 2;
-      ctx.quadraticCurveTo(p.x, p.y, xc, yc);
-    }
-    
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-
-    ctx.save();
-    const grad = ctx.createRadialGradient(center.x - this.radius*0.25, center.y - this.radius*0.25, 4, center.x, center.y, this.radius * 1.4);
-    grad.addColorStop(0, 'rgba(255, 255, 255, 0.28)');
-    grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.0)');
-    grad.addColorStop(1, 'rgba(0, 0, 0, 0.55)');
-    ctx.fillStyle = grad;
-    
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    for (let i = 1; i <= pointsCount; i++) {
-      const p = this.particles[i];
-      const nextP = this.particles[i === pointsCount ? 1 : i + 1];
-      ctx.quadraticCurveTo(p.x, p.y, (p.x + nextP.x)/2, (p.y + nextP.y)/2);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-
-    for (let i = 0; i < this.shards.length; i++) {
-      const shard = this.shards[i];
-      if (shard.opacity !== undefined && shard.opacity <= 0) continue; // 완전히 녹아버린 조각은 드로잉 스킵
-
-      const boundaryP = this.particles[shard.pIndex];
-      
-      const baseAngle = Math.atan2(boundaryP.y - center.y, boundaryP.x - center.x) + shard.angleOffset;
-      const dist = Math.hypot(boundaryP.x - center.x, boundaryP.y - center.y) * shard.ratio;
-      
-      const shardX = center.x + Math.cos(baseAngle) * dist;
-      const shardY = center.y + Math.sin(baseAngle) * dist;
-
-      ctx.save();
-      ctx.translate(shardX, shardY);
-      ctx.rotate(baseAngle);
-      ctx.fillStyle = shard.color;
-      
-      if (shard.opacity !== undefined) {
-        ctx.globalAlpha = shard.opacity;
-      }
-      
-      const opacityScale = shard.opacity !== undefined ? shard.opacity : 1.0;
-
-      if (shard.type === 'normal') {
-        ctx.beginPath();
-        const s = shard.size * opacityScale;
-        ctx.moveTo(-s, -s);
-        ctx.lineTo(s * 0.8, -s * 0.7);
-        ctx.lineTo(s * 0.9, s * 0.6);
-        ctx.lineTo(-s * 0.1, s * 0.9);
-        ctx.lineTo(-s * 0.8, s * 0.3);
-        ctx.closePath();
-        ctx.fill();
-      } else if (shard.type === 'apple') {
-        ctx.fillStyle = '#f87171';
-        ctx.beginPath();
-        ctx.arc(0, 0, shard.size * opacityScale, 0, Math.PI, true);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = '#4ade80';
-        ctx.lineWidth = 1.5 * opacityScale;
-        ctx.stroke();
-      } else if (shard.type === 'star') {
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        const r = shard.size * opacityScale;
-        for (let j = 0; j < 5; j++) {
-          ctx.lineTo(Math.cos((18 + j * 72) * Math.PI / 180) * r, Math.sin((18 + j * 72) * Math.PI / 180) * r);
-          ctx.lineTo(Math.cos((54 + j * 72) * Math.PI / 180) * (r / 2), Math.sin((54 + j * 72) * Math.PI / 180) * (r / 2));
-        }
-        ctx.closePath();
-        ctx.fill();
-      } else if (shard.type === 'flake') {
-        ctx.fillStyle = '#ffffff';
-        const sw = shard.size * opacityScale;
-        ctx.fillRect(-sw, -sw * 0.5, sw * 2, sw);
-      }
-      ctx.restore();
-    }
+    this.toppingsList.forEach(t => {
+      this.scene.remove(t.mesh);
+      t.mesh.geometry.dispose();
+      t.mesh.material.dispose();
+    });
   }
 }
 
 
 // ============================================================================
-// 4. 왁뿌볼 종류별 시뮬레이션 클래스군 (Interactive Ball Classes)
+// 4. 3D 왁뿌볼 종류별 시뮬레이션 클래스군 (3D Ball Classes)
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// 스킨 1. 청사과 아삭 왁뿌 (Green Apple)
+// 스킨 1. 청사과 아삭 왁뿌 (3D Green Apple)
 // ----------------------------------------------------------------------------
 class GreenAppleBall {
-  constructor(cx, cy) {
+  constructor(scene) {
+    this.scene = scene;
     this.name = "청사과 아삭 왁뿌";
-    this.cx = cx;
-    this.cy = cy;
-    this.r = 100;
+    this.r = 1.6;
     
     this.stage = 0;
     this.pressure = 0.0;
-    this.crackProgress = 0.0;
     this.deformX = 0;
     this.deformY = 0;
     
     this.softBody = null;
-    this.segments = 6;
+    this.initMeshes();
   }
 
-  update(pointer, width, height, particles) {
+  initMeshes() {
+    this.group = new THREE.Group();
+
+    const shellGeo = new THREE.SphereGeometry(this.r, 32, 32);
+    const shellMat = new THREE.MeshStandardMaterial({
+      color: 0x76ff03,
+      roughness: 0.12,
+      metalness: 0.05
+    });
+    this.shellMesh = new THREE.Mesh(shellGeo, shellMat);
+    this.shellMesh.castShadow = true;
+    this.group.add(this.shellMesh);
+
+    this.decorations = [];
+    for(let i=0; i<8; i++) {
+      const isStar = Math.random() < 0.5;
+      const decGeo = isStar ? new THREE.ConeGeometry(0.12, 0.18, 4) : new THREE.BoxGeometry(0.18, 0.12, 0.06);
+      const decMat = new THREE.MeshStandardMaterial({
+        color: isStar ? 0xfbbf24 : 0xf87171,
+        roughness: 0.2
+      });
+      const decMesh = new THREE.Mesh(decGeo, decMat);
+      
+      const angle1 = Math.random() * Math.PI * 2;
+      const angle2 = Math.random() * Math.PI;
+      decMesh.position.set(
+        Math.cos(angle1) * Math.sin(angle2) * this.r,
+        Math.sin(angle1) * Math.sin(angle2) * this.r,
+        Math.cos(angle2) * this.r
+      );
+      decMesh.rotation.set(Math.random()*6, Math.random()*6, Math.random()*6);
+      this.group.add(decMesh);
+      this.decorations.push(decMesh);
+    }
+
+    this.crackGroup = new THREE.Group();
+    const crackMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+    for (let i = 0; i < 6; i++) {
+      const points = [];
+      const angle = (i / 6) * Math.PI * 2;
+      for (let j = 0; j <= 20; j++) {
+        const lat = (j / 20) * Math.PI - Math.PI/2;
+        points.push(new THREE.Vector3(
+          Math.cos(angle) * Math.cos(lat) * (this.r + 0.015),
+          Math.sin(lat) * (this.r + 0.015),
+          Math.sin(angle) * Math.cos(lat) * (this.r + 0.015)
+        ));
+      }
+      const crackGeo = new THREE.BufferGeometry().setFromPoints(points);
+      const crackLine = new THREE.Line(crackGeo, crackMat);
+      this.crackGroup.add(crackLine);
+    }
+    this.crackGroup.visible = false;
+    this.group.add(this.crackGroup);
+
+    this.scene.add(this.group);
+  }
+
+  update(pointer, raycaster, targetPos, particles) {
     if (this.stage === 2) {
-      if (this.softBody) this.softBody.update(pointer, width, height);
+      if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
     }
 
-    const dx = pointer.x - this.cx;
-    const dy = pointer.y - this.cy;
-    const dist = Math.hypot(dx, dy);
+    const intersects = raycaster.intersectObject(this.shellMesh);
 
-    if (pointer.active && dist < this.r + 20) {
-      this.deformX = (pointer.x - this.cx) * 0.22;
-      this.deformY = (pointer.y - this.cy) * 0.22;
+    if (pointer.active && intersects.length > 0) {
+      const hitPt = intersects[0].point;
+      this.deformX = hitPt.x * 0.12;
+      this.deformY = hitPt.y * 0.12;
+      this.group.position.set(this.deformX, this.deformY, 0);
 
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += 0.009 + dragSpeed * 0.002;
+      this.pressure += 0.002 + dragSpeed * 0.0004;
       
       if (this.pressure > 0.3) {
         this.stage = 1;
-        this.crackProgress = (this.pressure - 0.3) / 0.7;
+        this.crackGroup.visible = true;
+        this.crackGroup.scale.setScalar(1.0 + (this.pressure - 0.3) * 0.02);
       }
 
-      // 왁스 으깨짐 소리 (리얼 아작아작 - 청사과 타입 고유음)
       if (Math.random() < 0.15) {
-        audio.playCrunch('apple', 1.0); 
+        audio.playCrunch('apple', 1.0, hitPt); 
         if (navigator.vibrate) navigator.vibrate(8);
-        particles.push(new Particle(pointer.x, pointer.y, '#76ff03', 3 + Math.random()*3));
+        particles.push(new Particle3D(this.scene, hitPt, '#76ff03', 0.05 + Math.random()*0.05));
       }
 
       if (this.pressure >= 1.0) {
@@ -846,6 +976,7 @@ class GreenAppleBall {
     } else {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
+      this.group.position.set(this.deformX, this.deformY, 0);
     }
   }
 
@@ -853,252 +984,220 @@ class GreenAppleBall {
     this.stage = 2;
     this.pressure = 1.0;
     
-    audio.playPop(170);
+    audio.playPop(170, this.group.position);
     if (navigator.vibrate) navigator.vibrate([30, 60, 120]);
 
-    for (let i = 0; i < 25; i++) {
-      const px = this.cx + (Math.random() - 0.5) * this.r;
-      const py = this.cy + (Math.random() - 0.5) * this.r;
-      particles.push(new Particle(px, py, '#76ff03', 4 + Math.random() * 8, 'normal'));
+    const pos = this.group.position.clone();
+    for (let i = 0; i < 20; i++) {
+      const offset = new THREE.Vector3((Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r);
+      particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#76ff03', 0.06 + Math.random()*0.08, 'normal'));
       if (Math.random() < 0.35) {
-        particles.push(new Particle(px, py, '#ff3366', 6 + Math.random() * 4, 'apple'));
+        particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#ff3366', 0.08 + Math.random()*0.04, 'apple'));
       }
       if (Math.random() < 0.45) {
-        particles.push(new Particle(px, py, '#ffd700', 5 + Math.random() * 5, 'star'));
+        particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#ffd700', 0.07 + Math.random()*0.05, 'star'));
       }
     }
 
-    this.softBody = new SoftBody(this.cx, this.cy, this.r * 1.06, '#ffffff', ['#76ff03', '#ccff90'], 20, ['normal', 'apple', 'star']);
+    this.scene.remove(this.group);
+    
+    this.softBody = new SoftBody3D(this.scene, 'sphere', this.r * 1.05, '#ffffff', ['#76ff03', '#ccff90'], 16, ['normal', 'apple', 'star']);
     this.softBody.meltShards = true;
-    this.softBody.targetColor = '#e2f5d3'; // 융해 단계 완료 시 연두빛 크림으로 섞여 들어감
+    this.softBody.targetColor = '#e2f5d3'; 
   }
 
-  draw(ctx) {
-    ctx.save();
-
-    if (this.stage === 2) {
-      if (this.softBody) this.softBody.draw(ctx);
-      ctx.restore();
-      return;
+  destroy() {
+    if (this.softBody) {
+      this.softBody.destroy();
+    } else {
+      this.scene.remove(this.group);
+      this.shellMesh.geometry.dispose();
+      this.shellMesh.material.dispose();
+      this.decorations.forEach(d => {
+        d.geometry.dispose();
+        d.material.dispose();
+      });
+      this.crackGroup.children.forEach(c => {
+        c.geometry.dispose();
+        c.material.dispose();
+      });
     }
-
-    ctx.translate(this.cx + this.deformX, this.cy + this.deformY);
-
-    const gradBalloon = ctx.createRadialGradient(-15, -15, 0, 0, 0, this.r * 1.1);
-    gradBalloon.addColorStop(0, 'rgba(255, 255, 255, 0.25)');
-    gradBalloon.addColorStop(0.8, 'rgba(118, 255, 3, 0.12)');
-    gradBalloon.addColorStop(1, 'rgba(118, 255, 3, 0.5)');
-    ctx.fillStyle = gradBalloon;
-    ctx.beginPath();
-    ctx.arc(0, 0, this.r * 1.06, 0, Math.PI * 2);
-    ctx.fill();
-
-    const gradApple = ctx.createRadialGradient(-20, -20, 5, 0, 0, this.r);
-    gradApple.addColorStop(0, '#ccff90');
-    gradApple.addColorStop(0.6, '#76ff03');
-    gradApple.addColorStop(1, '#2e5c00');
-    ctx.fillStyle = gradApple;
-    ctx.beginPath();
-    ctx.arc(0, 0, this.r, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = 'rgba(248, 113, 113, 0.35)';
-    ctx.beginPath();
-    ctx.arc(-30, 20, 14, 0, Math.PI, true);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = 'rgba(251, 191, 36, 0.4)';
-    ctx.beginPath();
-    ctx.arc(30, -20, 12, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (this.stage === 1) {
-      ctx.save();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1 + this.crackProgress * 8;
-      
-      for (let i = 0; i < this.segments; i++) {
-        const angle = (i / this.segments) * Math.PI;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, this.r * Math.abs(Math.cos(angle)), this.r, angle, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    ctx.restore();
   }
 }
 
 // ----------------------------------------------------------------------------
-// 스킨 2. 3레이어 버터 왁뿌 (3-Layer Butter Stick)
+// 스킨 2. 3레이어 버터 왁뿌 (3D 3-Layer Butter Stick)
 // ----------------------------------------------------------------------------
 class ButterStickBall {
-  constructor(cx, cy) {
+  constructor(scene) {
+    this.scene = scene;
     this.name = "3레이어 버터 왁뿌";
-    this.cx = cx;
-    this.cy = cy;
-    this.w = 200;
-    this.h = 80;
+    this.w = 2.4;
+    this.h = 1.0;
+    this.d = 1.0;
     
     this.stage = 0;
-    this.gridCols = 8;
-    this.gridRows = 3;
-    this.flakes = [];
-    this.initFlakes();
-    
     this.deformY = 0;
     this.softBody = null;
+    this.flakes = [];
+    this.initMeshes();
   }
 
-  initFlakes() {
-    const fw = this.w / this.gridCols;
-    const fh = this.h / this.gridRows;
+  initMeshes() {
+    this.group = new THREE.Group();
+
+    const butterGeo = new THREE.BoxGeometry(this.w, this.h, this.d);
+    const butterMat = new THREE.MeshStandardMaterial({
+      color: 0xffd54f,
+      roughness: 0.45,
+      metalness: 0.02
+    });
+    this.butterMesh = new THREE.Mesh(butterGeo, butterMat);
+    this.butterMesh.castShadow = true;
+    this.butterMesh.receiveShadow = true;
+    this.group.add(this.butterMesh);
+
+    const cols = 6;
+    const rows = 3;
+    const fw = this.w / cols;
+    const fh = this.h / rows;
     const startX = -this.w / 2;
     const startY = -this.h / 2;
 
-    for (let r = 0; r < this.gridRows; r++) {
-      for (let c = 0; c < this.gridCols; c++) {
-        this.flakes.push({
-          x: startX + c * fw + fw / 2,
-          y: startY + r * fh + fh / 2,
-          w: fw,
-          h: fh,
-          alive: true
-        });
+    const flakeGeo = new THREE.BoxGeometry(fw * 0.95, fh * 0.95, 0.08);
+    const flakeMat = new THREE.MeshStandardMaterial({
+      color: 0xf5f5f5,
+      roughness: 0.6
+    });
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const fMesh = new THREE.Mesh(flakeGeo, flakeMat);
+        fMesh.position.set(
+          startX + c * fw + fw / 2,
+          startY + r * fh + fh / 2,
+          this.d / 2 + 0.03
+        );
+        this.group.add(fMesh);
+        this.flakes.push({ mesh: fMesh, alive: true, health: 3 });
+        
+        const fMeshB = new THREE.Mesh(flakeGeo, flakeMat);
+        fMeshB.position.set(
+          startX + c * fw + fw / 2,
+          startY + r * fh + fh / 2,
+          -this.d / 2 - 0.03
+        );
+        this.group.add(fMeshB);
+        this.flakes.push({ mesh: fMeshB, alive: true, health: 3 });
       }
     }
+
+    this.scene.add(this.group);
   }
 
-  update(pointer, width, height, particles) {
+  update(pointer, raycaster, targetPos, particles) {
     if (this.stage === 2) {
-      if (this.softBody) this.softBody.update(pointer, width, height);
+      if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
     }
 
-    const xMin = this.cx - this.w / 2 - 10;
-    const xMax = this.cx + this.w / 2 + 10;
-    const yMin = this.cy - this.h / 2 - 10;
-    const yMax = this.cy + this.h / 2 + 10;
+    let peeledSomething = false;
+    let hitPt = null;
 
-    if (pointer.active && pointer.x > xMin && pointer.x < xMax && pointer.y > yMin && pointer.y < yMax) {
-      this.deformY = (pointer.y - this.cy) * 0.18;
+    if (pointer.active) {
+      const intersects = raycaster.intersectObjects(this.flakes.filter(f => f.alive).map(f => f.mesh));
+      if (intersects.length > 0) {
+        const hitFlake = intersects[0].object;
+        hitPt = intersects[0].point;
 
-      const rx = pointer.x - this.cx;
-      const ry = pointer.y - this.cy;
-      
-      let peeledSomething = false;
+        this.deformY = hitPt.y * 0.08;
+        this.group.scale.set(1.0, 1.0 + this.deformY, 1.0);
 
-      this.flakes.forEach(flake => {
-        if (flake.alive) {
-          const dx = rx - flake.x;
-          const dy = ry - flake.y;
-          if (Math.hypot(dx, dy) < 42) {
-            flake.alive = false;
+        const targetData = this.flakes.find(f => f.mesh === hitFlake);
+        if (targetData) {
+          const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
+          if (Math.random() < 0.4 || speed > 1.2) {
+            targetData.health -= 1;
             peeledSomething = true;
-            particles.push(new Particle(pointer.x, pointer.y, '#f5f5f5', 3 + Math.random() * 5, 'flake'));
+
+            particles.push(new Particle3D(this.scene, hitPt, '#ffffff', 0.025 + Math.random()*0.02, 'flake'));
+
+            if (targetData.health <= 0) {
+              targetData.alive = false;
+              this.group.remove(hitFlake);
+              
+              for(let i=0; i<3; i++) {
+                particles.push(new Particle3D(this.scene, hitPt, '#ffffff', 0.04 + Math.random()*0.04, 'flake'));
+              }
+            } else {
+              hitFlake.material.color.setHex(0xdddddd);
+              hitFlake.position.z += (Math.random() - 0.5) * 0.015;
+            }
           }
         }
-      });
-
-      if (peeledSomething) {
-        this.stage = 1;
-        audio.playCrunch(0.7); 
-        if (navigator.vibrate) navigator.vibrate(7);
-      }
-
-      const aliveCount = this.flakes.filter(f => f.alive).length;
-      const total = this.flakes.length;
-      
-      if (aliveCount / total <= 0.25) {
-        this.explode(particles);
       }
     } else {
       this.deformY *= 0.82;
+      this.group.scale.set(1.0, 1.0 + this.deformY, 1.0);
+    }
+
+    if (peeledSomething) {
+      this.stage = 1;
+      audio.playCrunch('butter', 0.7, hitPt); 
+      if (navigator.vibrate) navigator.vibrate(7);
+
+      const aliveCount = this.flakes.filter(f => f.alive).length;
+      if (aliveCount / this.flakes.length <= 0.3) {
+        this.explode(particles);
+      }
     }
   }
 
   explode(particles) {
     this.stage = 2;
-    audio.playPop(115);
+    const pos = this.group.position.clone();
+    audio.playPop(115, pos);
     if (navigator.vibrate) navigator.vibrate([35, 45, 80]);
 
-    for (let i = 0; i < 20; i++) {
-      const px = this.cx + (Math.random() - 0.5) * this.w;
-      const py = this.cy + (Math.random() - 0.5) * this.h;
-      particles.push(new Particle(px, py, '#ffffff', 4 + Math.random() * 6, 'flake'));
-      if (Math.random() < 0.5) {
-        particles.push(new Particle(px, py, '#fff59d', 3 + Math.random() * 5, 'normal'));
-      }
-    }
-
-    this.softBody = new SoftBody(this.cx, this.cy, this.w * 0.46, '#ffe082', '#ffffff', 22, ['flake']);
-  }
-
-  draw(ctx) {
-    ctx.save();
-
-    if (this.stage === 2) {
-      if (this.softBody) this.softBody.draw(ctx);
-      ctx.restore();
-      return;
-    }
-
-    ctx.translate(this.cx, this.cy);
-    ctx.scale(1.0, 1.0 + this.deformY / this.h);
-
-    const gradButter = ctx.createLinearGradient(-this.w/2, -this.h/2, -this.w/2, this.h/2);
-    gradButter.addColorStop(0, '#fff9c4');
-    gradButter.addColorStop(0.5, '#ffd54f');
-    gradButter.addColorStop(1, '#f57f17');
-    ctx.fillStyle = gradButter;
-    ctx.beginPath();
-    ctx.roundRect(-this.w / 2, -this.h / 2, this.w, this.h, 12);
-    ctx.fill();
-
-    ctx.font = '800 24px var(--font-title)';
-    ctx.fillStyle = 'rgba(13, 71, 161, 0.45)';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.save();
-    ctx.rotate(-0.06);
-    ctx.fillText('BUTTER', 0, 0);
-    ctx.restore();
-
-    this.flakes.forEach(flake => {
-      if (flake.alive) {
-        ctx.save();
-        ctx.fillStyle = '#fcfcfc';
-        ctx.strokeStyle = '#e0e0e0';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(flake.x - flake.w/2, flake.y - flake.h/2, flake.w, flake.h, 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
+    this.flakes.forEach(f => {
+      if (f.alive) {
+        this.group.remove(f.mesh);
+        particles.push(new Particle3D(this.scene, f.mesh.position.clone().add(pos), '#ffffff', 0.06 + Math.random()*0.05, 'flake'));
       }
     });
 
-    ctx.strokeStyle = 'rgba(13, 71, 161, 0.3)';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(-this.w/2 + 20, -this.h/2, 20, this.h);
+    this.scene.remove(this.group);
+    this.softBody = new SoftBody3D(this.scene, 'box', 0.8, '#ffe082', '#ffffff', 18, ['flake']);
+  }
 
-    ctx.restore();
+  destroy() {
+    if (this.softBody) {
+      this.softBody.destroy();
+    } else {
+      this.scene.remove(this.group);
+      this.butterMesh.geometry.dispose();
+      this.butterMesh.material.dispose();
+      this.flakes.forEach(f => {
+        f.mesh.geometry.dispose();
+        f.mesh.material.dispose();
+      });
+    }
   }
 }
 
 // ----------------------------------------------------------------------------
-// 스킨 3. 크리스피 미니 왁볼 (Crispy Mini Balloon)
+// 스킨 3. 크리스피 미니 왁볼 (3D Crispy Mini Balloon)
 // ----------------------------------------------------------------------------
-class MiniWaxBead {
-  constructor(x, y, r, color) {
-    this.x = x;
-    this.y = y;
+class MiniWaxBead3D {
+  constructor(pos, r, color) {
+    this.pos = pos.clone();
+    this.originalPos = pos.clone();
     this.r = r;
     this.color = color;
     
-    this.vx = (Math.random() - 0.5) * 2;
-    this.vy = (Math.random() - 0.5) * 2;
+    this.vx = (Math.random() - 0.5) * 1.5;
+    this.vy = (Math.random() - 0.5) * 1.5;
+    this.vz = (Math.random() - 0.5) * 1.5;
     
     this.stage = 0;
     this.pressure = 0;
@@ -1106,266 +1205,254 @@ class MiniWaxBead {
 }
 
 class MiniBalloonBall {
-  constructor(cx, cy) {
+  constructor(scene) {
+    this.scene = scene;
     this.name = "크리스피 미니 왁볼";
-    this.cx = cx;
-    this.cy = cy;
-    this.r = 110;
+    this.r = 1.7;
     
     this.stage = 0;
-    this.softBody = null;
     this.pressure = 0.0;
     this.deformX = 0;
     this.deformY = 0;
+    this.softBody = null;
 
-    this.beads = [
-      new MiniWaxBead(cx - 30, cy - 20, 24, '#f06292'),
-      new MiniWaxBead(cx + 40, cy - 10, 26, '#4dd0e1'),
-      new MiniWaxBead(cx - 5, cy + 35, 25, '#fff176')
+    this.beadData = [
+      new MiniWaxBead3D(new THREE.Vector3(-0.4, 0.3, 0.1), 0.35, '#f06292'),
+      new MiniWaxBead3D(new THREE.Vector3(0.5, 0.1, -0.2), 0.37, '#4dd0e1'),
+      new MiniWaxBead3D(new THREE.Vector3(-0.1, -0.4, 0.2), 0.36, '#fff176')
     ];
+
+    this.initMeshes();
   }
 
-  update(pointer, width, height, particles) {
+  initMeshes() {
+    this.group = new THREE.Group();
+
+    const balloonGeo = new THREE.SphereGeometry(this.r, 32, 32);
+    this.balloonMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.22,
+      roughness: 0.1,
+      metalness: 0.05,
+      transmission: 0.95, 
+      thickness: 0.8
+    });
+    this.balloonMesh = new THREE.Mesh(balloonGeo, this.balloonMat);
+    this.group.add(this.balloonMesh);
+
+    this.beads = [];
+    const beadGeo = new THREE.SphereGeometry(1.0, 16, 16);
+    this.beadData.forEach(bd => {
+      const beadMat = new THREE.MeshStandardMaterial({
+        color: bd.color,
+        roughness: 0.15,
+        metalness: 0.05
+      });
+      const bMesh = new THREE.Mesh(beadGeo, beadMat);
+      bMesh.scale.setScalar(bd.r);
+      bMesh.position.copy(bd.pos);
+      this.group.add(bMesh);
+      this.beads.push({ mesh: bMesh, data: bd });
+    });
+
+    this.scene.add(this.group);
+  }
+
+  update(pointer, raycaster, targetPos, particles) {
     if (this.stage === 2) {
-      if (this.softBody) this.softBody.update(pointer, width, height);
+      if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
     }
 
-    // 비드 자체 관성 물리 업데이트 및 외벽 충돌 처리
     for (let i = 0; i < this.beads.length; i++) {
       const b = this.beads[i];
-      if (b.stage === 2) continue;
+      if (b.data.stage === 2) continue;
 
-      b.vx *= 0.98;
-      b.vy *= 0.98;
-      b.x += b.vx;
-      b.y += b.vy;
+      b.data.vx *= 0.98;
+      b.data.vy *= 0.98;
+      b.data.vz *= 0.98;
 
-      const dx = b.x - this.cx;
-      const dy = b.y - this.cy;
-      const dist = Math.hypot(dx, dy);
-      const limit = this.r - b.r - 8;
-      
+      b.data.pos.x += b.data.vx * 0.05;
+      b.data.pos.y += b.data.vy * 0.05;
+      b.data.pos.z += b.data.vz * 0.05;
+
+      const dist = b.data.pos.length();
+      const limit = this.r - b.data.r - 0.08;
       if (dist > limit) {
-        const angle = Math.atan2(dy, dx);
-        b.x = this.cx + Math.cos(angle) * limit;
-        b.y = this.cy + Math.sin(angle) * limit;
-        const speed = Math.hypot(b.vx, b.vy);
-        b.vx = -Math.cos(angle) * Math.max(speed, 0.6);
-        b.vy = -Math.sin(angle) * Math.max(speed, 0.6);
+        b.data.pos.normalize().multiplyScalar(limit);
+        
+        const normal = b.data.pos.clone().normalize();
+        const velocity = new THREE.Vector3(b.data.vx, b.data.vy, b.data.vz);
+        const bounceVec = velocity.clone().sub(normal.clone().multiplyScalar(velocity.dot(normal) * 2.0));
+        b.data.vx = bounceVec.x * 0.75;
+        b.data.vy = bounceVec.y * 0.75;
+        b.data.vz = bounceVec.z * 0.75;
+        
+        if (Math.hypot(b.data.vx, b.data.vy) > 0.4) {
+          audio.playBeadTap(b.data.pos.clone().add(this.group.position));
+        }
       }
 
-      // 비드 상호 충돌 처리
       for (let j = i + 1; j < this.beads.length; j++) {
         const other = this.beads[j];
-        if (other.stage === 2) continue;
+        if (other.data.stage === 2) continue;
 
-        const bx = other.x - b.x;
-        const by = other.y - b.y;
-        const bDist = Math.hypot(bx, by);
-        const minDist = b.r + other.r;
+        const delta = other.data.pos.clone().sub(b.data.pos);
+        const bDist = delta.length();
+        const minDist = b.data.r + other.data.r;
 
         if (bDist < minDist) {
           const overlap = minDist - bDist;
-          const angle = Math.atan2(by, bx);
-          
-          b.x -= Math.cos(angle) * overlap * 0.5;
-          b.y -= Math.sin(angle) * overlap * 0.5;
-          other.x += Math.cos(angle) * overlap * 0.5;
-          other.y += Math.sin(angle) * overlap * 0.5;
+          const normal = delta.normalize();
 
-          const tempVx = b.vx;
-          const tempVy = b.vy;
-          b.vx = other.vx * 0.8;
-          b.vy = other.vy * 0.8;
-          other.vx = tempVx * 0.8;
-          other.vy = tempVy * 0.8;
+          b.data.pos.addScaledVector(normal, -overlap * 0.5);
+          other.data.pos.addScaledVector(normal, overlap * 0.5);
+
+          const v1 = new THREE.Vector3(b.data.vx, b.data.vy, b.data.vz);
+          const v2 = new THREE.Vector3(other.data.vx, other.data.vy, other.data.vz);
+          
+          b.data.vx = v2.x * 0.8;
+          b.data.vy = v2.y * 0.8;
+          b.data.vz = v2.z * 0.8;
+          other.data.vx = v1.x * 0.8;
+          other.data.vy = v1.y * 0.8;
+          other.data.vz = v1.z * 0.8;
+
+          audio.playBeadTap(b.data.pos.clone().add(this.group.position));
         }
       }
+
+      b.mesh.position.copy(b.data.pos);
     }
 
-    const dx = pointer.x - this.cx;
-    const dy = pointer.y - this.cy;
-    const dist = Math.hypot(dx, dy);
+    const intersects = raycaster.intersectObject(this.balloonMesh);
 
-    // 사용자가 마우스를 클릭하고 문질러서 흔들면 깨지게 수정
-    if (pointer.active && dist < this.r + 20) {
-      this.deformX = (pointer.x - this.cx) * 0.22;
-      this.deformY = (pointer.y - this.cy) * 0.22;
+    if (pointer.active && intersects.length > 0) {
+      const hitPt = intersects[0].point;
+      this.deformX = hitPt.x * 0.13;
+      this.deformY = hitPt.y * 0.13;
+      this.group.position.set(this.deformX, this.deformY, 0);
 
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += 0.008 + dragSpeed * 0.0018;
+      this.pressure += 0.0016 + dragSpeed * 0.0003;
 
-      // 흔들림에 따라 비드들이 안에서 날뛰도록 속도 유입
       this.beads.forEach(b => {
-        if (b.stage !== 2) {
-          b.vx += (Math.random() - 0.5) * (2 + dragSpeed * 0.5);
-          b.vy += (Math.random() - 0.5) * (2 + dragSpeed * 0.5);
+        if (b.data.stage !== 2) {
+          b.data.vx += (Math.random() - 0.5) * (2 + dragSpeed * 0.4);
+          b.data.vy += (Math.random() - 0.5) * (2 + dragSpeed * 0.4);
+          b.data.vz += (Math.random() - 0.5) * (2 + dragSpeed * 0.4);
         }
       });
 
-      // 바삭한 소리 크래킹 사운드 (미니벌룬 고유음)
       if (Math.random() < 0.15) {
-        audio.playCrunch('balloon', 1.35);
+        audio.playCrunch('balloon', 1.35, hitPt);
         if (navigator.vibrate) navigator.vibrate(5);
       }
 
-      // 비드 0 단계 업데이트 (0.25 임계치 도달 시 톡!)
-      if (this.pressure > 0.05 && this.pressure < 0.25 && this.beads[0].stage !== 2) {
-        this.beads[0].stage = 1;
+      if (this.pressure > 0.05 && this.pressure < 0.25 && this.beads[0].data.stage !== 2) {
+        this.beads[0].data.stage = 1;
       }
-      if (this.pressure >= 0.25 && this.beads[0].stage !== 2) {
-        this.beads[0].stage = 2;
-        audio.playMiniPop();
+      if (this.pressure >= 0.25 && this.beads[0].data.stage !== 2) {
+        this.beads[0].data.stage = 2;
+        this.group.remove(this.beads[0].mesh);
+        audio.playMiniPop(this.beads[0].data.pos.clone().add(this.group.position));
         if (navigator.vibrate) navigator.vibrate([10, 35]);
         for (let k = 0; k < 12; k++) {
-          particles.push(new Particle(this.beads[0].x, this.beads[0].y, this.beads[0].color, 3 + Math.random() * 5));
+          particles.push(new Particle3D(this.scene, this.beads[0].data.pos.clone().add(this.group.position), this.beads[0].data.color, 0.04 + Math.random()*0.04));
         }
       }
 
-      // 비드 1 단계 업데이트 (0.55 임계치 도달 시 톡!)
-      if (this.pressure > 0.35 && this.pressure < 0.55 && this.beads[1].stage !== 2) {
-        this.beads[1].stage = 1;
+      if (this.pressure > 0.35 && this.pressure < 0.55 && this.beads[1].data.stage !== 2) {
+        this.beads[1].data.stage = 1;
       }
-      if (this.pressure >= 0.55 && this.beads[1].stage !== 2) {
-        this.beads[1].stage = 2;
-        audio.playMiniPop();
+      if (this.pressure >= 0.55 && this.beads[1].data.stage !== 2) {
+        this.beads[1].data.stage = 2;
+        this.group.remove(this.beads[1].mesh);
+        audio.playMiniPop(this.beads[1].data.pos.clone().add(this.group.position));
         if (navigator.vibrate) navigator.vibrate([10, 35]);
         for (let k = 0; k < 12; k++) {
-          particles.push(new Particle(this.beads[1].x, this.beads[1].y, this.beads[1].color, 3 + Math.random() * 5));
+          particles.push(new Particle3D(this.scene, this.beads[1].data.pos.clone().add(this.group.position), this.beads[1].data.color, 0.04 + Math.random()*0.04));
         }
       }
 
-      // 비드 2 단계 업데이트 (0.85 임계치 도달 시 톡!)
-      if (this.pressure > 0.65 && this.pressure < 0.85 && this.beads[2].stage !== 2) {
-        this.beads[2].stage = 1;
+      if (this.pressure > 0.65 && this.pressure < 0.85 && this.beads[2].data.stage !== 2) {
+        this.beads[2].data.stage = 1;
       }
-      if (this.pressure >= 0.85 && this.beads[2].stage !== 2) {
-        this.beads[2].stage = 2;
-        audio.playMiniPop();
+      if (this.pressure >= 0.85 && this.beads[2].data.stage !== 2) {
+        this.beads[2].data.stage = 2;
+        this.group.remove(this.beads[2].mesh);
+        audio.playMiniPop(this.beads[2].data.pos.clone().add(this.group.position));
         if (navigator.vibrate) navigator.vibrate([10, 35]);
         for (let k = 0; k < 12; k++) {
-          particles.push(new Particle(this.beads[2].x, this.beads[2].y, this.beads[2].color, 3 + Math.random() * 5));
+          particles.push(new Particle3D(this.scene, this.beads[2].data.pos.clone().add(this.group.position), this.beads[2].data.color, 0.04 + Math.random()*0.04));
         }
       }
 
-      // 1.0 압력 도달 및 모든 비드가 터지면 최종 벌룬 파열!
-      const allBursted = this.beads.every(b => b.stage === 2);
+      const allBursted = this.beads.every(b => b.data.stage === 2);
       if (this.pressure >= 1.0 || allBursted) {
-        // 혹시 아직 덜 터진 비드가 있으면 강제로 다 터뜨림
-        this.beads.forEach(b => {
-          if (b.stage !== 2) {
-            b.stage = 2;
-            for (let k = 0; k < 12; k++) {
-              particles.push(new Particle(b.x, b.y, b.color, 3 + Math.random() * 5));
-            }
-          }
-        });
         this.explode(particles);
       }
     } else {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
+      this.group.position.set(this.deformX, this.deformY, 0);
     }
   }
 
   explode(particles) {
     this.stage = 2;
-    audio.playPop(190);
+    const pos = this.group.position.clone();
+    audio.playPop(190, pos);
     if (navigator.vibrate) navigator.vibrate([30, 40, 90]);
 
-    this.softBody = new SoftBody(
-      this.cx, 
-      this.cy, 
-      this.r * 0.9, 
-      'rgba(255, 255, 255, 0.22)', 
-      ['#ff80ab', '#80deea', '#ffff8d'], 
-      22, 
-      ['normal']
-    );
-  }
-
-  draw(ctx) {
-    ctx.save();
-
-    if (this.stage === 2) {
-      if (this.softBody) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-        ctx.lineWidth = 2.5;
-        this.softBody.draw(ctx);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.restore();
-      return;
-    }
-
-    ctx.translate(this.cx + this.deformX, this.cy + this.deformY);
-
-    ctx.save();
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = 'rgba(255, 255, 255, 0.05)';
-    const gradBalloon = ctx.createRadialGradient(-20, -20, 0, 0, 0, this.r);
-    gradBalloon.addColorStop(0, 'rgba(255, 255, 255, 0.18)');
-    gradBalloon.addColorStop(0.8, 'rgba(255, 255, 255, 0.06)');
-    gradBalloon.addColorStop(1, 'rgba(255, 255, 255, 0.28)');
-    ctx.fillStyle = gradBalloon;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, this.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.beginPath();
-    ctx.arc(0, -this.r, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
     this.beads.forEach(b => {
-      if (b.stage !== 2) {
-        ctx.save();
-        const rx = b.x - this.cx;
-        const ry = b.y - this.cy;
-        const beadGrad = ctx.createRadialGradient(rx - b.r*0.2, ry - b.r*0.2, 2, rx, ry, b.r);
-        beadGrad.addColorStop(0, '#ffffff');
-        beadGrad.addColorStop(0.3, b.color);
-        beadGrad.addColorStop(1, 'rgba(0,0,0,0.55)');
-        
-        ctx.fillStyle = beadGrad;
-        ctx.beginPath();
-        ctx.arc(rx, ry, b.r, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (b.stage === 1) {
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.moveTo(rx - b.r * 0.7, ry);
-          ctx.lineTo(rx + b.r * 0.7, ry);
-          ctx.moveTo(rx, ry - b.r * 0.7);
-          ctx.lineTo(rx, ry + b.r * 0.7);
-          ctx.stroke();
-        }
-        ctx.restore();
+      if (b.data.stage !== 2) {
+        this.group.remove(b.mesh);
+        particles.push(new Particle3D(this.scene, b.data.pos.clone().add(pos), b.data.color, 0.05 + Math.random()*0.05));
       }
     });
 
-    ctx.restore();
+    this.scene.remove(this.group);
+
+    this.softBody = new SoftBody3D(
+      this.scene, 
+      'sphere', 
+      this.r * 0.9, 
+      '#e0f7fa', 
+      ['#ff80ab', '#80deea', '#ffff8d'], 
+      18, 
+      ['normal']
+    );
+    this.softBody.material.transparent = true;
+    this.softBody.material.opacity = 0.4;
+    this.softBody.material.roughness = 0.1;
+    this.softBody.material.metalness = 0.1;
+  }
+
+  destroy() {
+    if (this.softBody) {
+      this.softBody.destroy();
+    } else {
+      this.scene.remove(this.group);
+      this.balloonMesh.geometry.dispose();
+      this.balloonMat.dispose();
+      this.beads.forEach(b => {
+        b.mesh.geometry.dispose();
+        b.mesh.material.dispose();
+      });
+    }
   }
 }
 
 // ----------------------------------------------------------------------------
-// 스킨 4. 초코 바나나 왁뿌 (Choco Banana Muddy)
+// 스킨 4. 초코 바나나 왁뿌 (3D Choco Banana Muddy)
 // ----------------------------------------------------------------------------
 class ChocoBananaBall {
-  constructor(cx, cy) {
+  constructor(scene) {
+    this.scene = scene;
     this.name = "초코 바나나 왁뿌";
-    this.cx = cx;
-    this.cy = cy;
-    this.r = 95;
+    this.r = 1.5;
     
     this.stage = 0;
     this.pressure = 0;
@@ -1373,34 +1460,72 @@ class ChocoBananaBall {
     this.deformY = 0;
     
     this.softBody = null;
+    this.initMeshes();
   }
 
-  update(pointer, width, height, particles) {
+  initMeshes() {
+    this.group = new THREE.Group();
+
+    const chocoGeo = new THREE.SphereGeometry(this.r, 32, 32);
+    const chocoMat = new THREE.MeshStandardMaterial({
+      color: 0x3e2723,
+      roughness: 0.55,
+      metalness: 0.05
+    });
+    this.chocoMesh = new THREE.Mesh(chocoGeo, chocoMat);
+    this.chocoMesh.castShadow = true;
+    this.group.add(this.chocoMesh);
+
+    this.crackGroup = new THREE.Group();
+    const crackMat = new THREE.LineBasicMaterial({ color: 0xffd54f, linewidth: 2 });
+    
+    for(let r=0; r<4; r++) {
+      const points = [];
+      const ringR = this.r * (0.2 + r * 0.25) + 0.015;
+      for (let i = 0; i <= 32; i++) {
+        const theta = (i / 32) * Math.PI * 2;
+        points.push(new THREE.Vector3(
+          Math.cos(theta) * ringR,
+          Math.sin(theta) * ringR,
+          (Math.random()-0.5)*0.1 
+        ));
+      }
+      const ringGeo = new THREE.BufferGeometry().setFromPoints(points);
+      const ringLine = new THREE.Line(ringGeo, crackMat);
+      this.crackGroup.add(ringLine);
+    }
+    this.crackGroup.visible = false;
+    this.group.add(this.crackGroup);
+
+    this.scene.add(this.group);
+  }
+
+  update(pointer, raycaster, targetPos, particles) {
     if (this.stage === 2) {
-      if (this.softBody) this.softBody.update(pointer, width, height);
+      if (this.softBody) this.softBody.update(pointer, raycaster, targetPos);
       return;
     }
 
-    const dx = pointer.x - this.cx;
-    const dy = pointer.y - this.cy;
-    const dist = Math.hypot(dx, dy);
+    const intersects = raycaster.intersectObject(this.chocoMesh);
 
-    if (pointer.active && dist < this.r + 20) {
-      this.deformX = (pointer.x - this.cx) * 0.17;
-      this.deformY = (pointer.y - this.cy) * 0.17;
+    if (pointer.active && intersects.length > 0) {
+      const hitPt = intersects[0].point;
+      this.deformX = hitPt.x * 0.11;
+      this.deformY = hitPt.y * 0.11;
+      this.group.position.set(this.deformX, this.deformY, 0);
 
       const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += 0.008 + speed * 0.0012;
+      this.pressure += 0.0015 + speed * 0.0002;
 
       if (this.pressure > 0.25) {
         this.stage = 1;
+        this.crackGroup.visible = true;
       }
 
-      // 초코바나나 크런치 사운드 재생
       if (Math.random() < 0.15) {
-        audio.playCrunch('choco', 0.62); 
+        audio.playCrunch('choco', 0.62, hitPt); 
         if (navigator.vibrate) navigator.vibrate(6);
-        particles.push(new Particle(pointer.x, pointer.y, '#4e342e', 3 + Math.random()*3));
+        particles.push(new Particle3D(this.scene, hitPt, '#4e342e', 0.05 + Math.random()*0.05));
       }
 
       if (this.pressure >= 1.0) {
@@ -1409,94 +1534,53 @@ class ChocoBananaBall {
     } else {
       this.deformX *= 0.82;
       this.deformY *= 0.82;
+      this.group.position.set(this.deformX, this.deformY, 0);
     }
   }
 
   explode(particles) {
     this.stage = 2;
-    audio.playPop(125);
+    const pos = this.group.position.clone();
+    audio.playPop(125, pos);
     if (navigator.vibrate) navigator.vibrate([25, 35, 100]);
 
     for (let i = 0; i < 20; i++) {
-      const px = this.cx + (Math.random() - 0.5) * this.r;
-      const py = this.cy + (Math.random() - 0.5) * this.r;
-      particles.push(new Particle(px, py, '#4e342e', 4 + Math.random() * 6));
+      const offset = new THREE.Vector3((Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r, (Math.random()-0.5)*this.r);
+      particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#4e342e', 0.06 + Math.random() * 0.06));
       if (Math.random() < 0.4) {
-        particles.push(new Particle(px, py, '#ffd54f', 3 + Math.random() * 4));
+        particles.push(new Particle3D(this.scene, pos.clone().add(offset), '#ffd54f', 0.05 + Math.random() * 0.05));
       }
     }
 
-    this.softBody = new SoftBody(this.cx, this.cy, this.r * 1.05, '#ffd54f', '#4e342e', 22, ['normal']);
+    this.scene.remove(this.group);
+
+    this.softBody = new SoftBody3D(this.scene, 'sphere', this.r * 1.05, '#ffd54f', '#4e342e', 18, ['normal']);
     this.softBody.meltShards = true;
-    this.softBody.targetColor = '#bcaaa4'; // 초코와 바나나가 섞인 진흙 반죽색
+    this.softBody.targetColor = '#bcaaa4'; 
   }
 
-  draw(ctx) {
-    ctx.save();
-
-    if (this.stage === 2) {
-      if (this.softBody) this.softBody.draw(ctx);
-      ctx.restore();
-      return;
+  destroy() {
+    if (this.softBody) {
+      this.softBody.destroy();
+    } else {
+      this.scene.remove(this.group);
+      this.chocoMesh.geometry.dispose();
+      this.chocoMesh.material.dispose();
+      this.crackGroup.children.forEach(c => {
+        c.geometry.dispose();
+        c.material.dispose();
+      });
     }
-
-    ctx.translate(this.cx + this.deformX, this.cy + this.deformY);
-
-    ctx.save();
-    ctx.shadowBlur = 25;
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    const gradChoco = ctx.createRadialGradient(-15, -15, 5, 0, 0, this.r);
-    gradChoco.addColorStop(0, '#5d4037');
-    gradChoco.addColorStop(0.7, '#3e2723');
-    gradChoco.addColorStop(1, '#1d0c07');
-    ctx.fillStyle = gradChoco;
-    ctx.beginPath();
-    ctx.arc(0, 0, this.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    if (this.stage === 1) {
-      ctx.save();
-      ctx.strokeStyle = '#ffd54f';
-      ctx.lineWidth = 1 + this.pressure * 6.5;
-      ctx.shadowBlur = 4;
-      ctx.shadowColor = '#ffd54f';
-
-      const rays = 8;
-      const progress = (this.pressure - 0.25) / 0.75;
-      
-      ctx.beginPath();
-      for (let i = 0; i < rays; i++) {
-        const angle = (i / rays) * Math.PI * 2;
-        const targetR = this.r * (0.4 + progress * 0.6);
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.cos(angle) * targetR, Math.sin(angle) * targetR);
-      }
-      ctx.stroke();
-
-      ctx.beginPath();
-      const rings = 3;
-      for (let rIdx = 1; rIdx <= rings; rIdx++) {
-        const ringR = (this.r * 0.3 * rIdx) * (0.5 + progress * 0.5);
-        ctx.arc(0, 0, ringR, 0, Math.PI * 2);
-      }
-      ctx.stroke();
-      
-      ctx.restore();
-    }
-
-    ctx.restore();
   }
 }
 
 
 // ============================================================================
-// 5. 시뮬레이션 시스템 총괄 및 루프 제어 (Orchestrator / Main App)
+// 5. 3D 시뮬레이션 시스템 총괄 및 루프 제어 (WebGL Orchestrator)
 // ============================================================================
-class App {
+class App3D {
   constructor() {
     this.canvas = document.getElementById('physics-canvas');
-    this.ctx = this.canvas.getContext('2d');
     
     this.btnAudio = document.getElementById('btn-audio-toggle');
     this.btnHaptic = document.getElementById('btn-haptic-toggle');
@@ -1505,83 +1589,112 @@ class App {
     this.hudStatus = document.getElementById('status-title');
     this.guideOverlay = document.getElementById('interaction-guide');
     this.cards = document.querySelectorAll('.skin-card');
-    
-    this.pointer = { x: 0, y: 0, px: 0, py: 0, active: false };
+
+    this.pointer = { x: 0, y: 0, px: 0, py: 0, active: false, xNDC: 0, yNDC: 0 };
     this.hapticEnabled = true;
-    
+
     this.activeSkin = 'green-apple';
     this.ball = null;
     this.particles = [];
-    
+
     this.firstTouchOccurred = false;
 
+    this.cameraRadius = 6.8;
+    this.theta = 0.0; 
+    this.phi = Math.PI / 2; 
+    this.isOrbiting = false;
+
+    this.initWebGL();
     this.initEvents();
-    this.resizeCanvas();
     this.spawnBall();
     this.animate();
   }
 
-  resizeCanvas() {
-    const dpr = window.devicePixelRatio || 1;
+  initWebGL() {
     const rect = this.canvas.getBoundingClientRect();
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
-    this.ctx.scale(dpr, dpr);
-    
-    if (this.ball) {
-      const oldCx = this.ball.cx;
-      const oldCy = this.ball.cy;
-      const newCx = rect.width / 2;
-      const newCy = rect.height / 2;
-      const dx = newCx - oldCx;
-      const dy = newCy - oldCy;
 
-      this.ball.cx = newCx;
-      this.ball.cy = newCy;
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 100);
+    this.updateCameraPos();
 
-      if (this.ball.beads) {
-        this.ball.beads.forEach(b => {
-          b.x += dx;
-          b.y += dy;
-        });
-      }
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true });
+    this.renderer.setSize(rect.width, rect.height);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-      if (this.ball.softBody) {
-        this.ball.softBody.particles.forEach(p => {
-          p.x += dx;
-          p.y += dy;
-        });
-      }
-    }
+    this.raycaster = new THREE.Raycaster();
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.35);
+    this.scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.95);
+    dirLight.position.set(4, 7, 5);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.bias = -0.001;
+    this.scene.add(dirLight);
+
+    this.cyanLight = new THREE.PointLight(0x00f0ff, 1.3, 15);
+    this.cyanLight.position.set(-5, 2, 1);
+    this.scene.add(this.cyanLight);
+
+    this.pinkLight = new THREE.PointLight(0xff007f, 1.3, 15);
+    this.pinkLight.position.set(5, -2, 1);
+    this.scene.add(this.pinkLight);
+
+    const floorGeo = new THREE.PlaneGeometry(15, 15);
+    const floorMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -3.2;
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+  }
+
+  updateCameraPos() {
+    this.camera.position.x = this.cameraRadius * Math.sin(this.phi) * Math.sin(this.theta);
+    this.camera.position.z = this.cameraRadius * Math.sin(this.phi) * Math.cos(this.theta);
+    this.camera.position.y = this.cameraRadius * Math.cos(this.phi);
+    this.camera.lookAt(0, 0, 0);
   }
 
   spawnBall() {
-    const rect = this.canvas.getBoundingClientRect();
-    const cx = rect.width / 2;
-    const cy = rect.height / 2;
+    if (this.ball) {
+      this.ball.destroy();
+    }
+    this.particles.forEach(p => p.destroy());
     this.particles = [];
 
     switch (this.activeSkin) {
       case 'green-apple':
-        this.ball = new GreenAppleBall(cx, cy);
+        this.ball = new GreenAppleBall(this.scene);
         this.hudBallName.textContent = "청사과 아삭 왁뿌";
         break;
       case 'butter-stick':
-        this.ball = new ButterStickBall(cx, cy);
+        this.ball = new ButterStickBall(this.scene);
         this.hudBallName.textContent = "3레이어 버터 왁뿌";
         break;
       case 'mini-balloon':
-        this.ball = new MiniBalloonBall(cx, cy);
+        this.ball = new MiniBalloonBall(this.scene);
         this.hudBallName.textContent = "크리스피 미니 왁볼";
         break;
       case 'choco-banana':
-        this.ball = new ChocoBananaBall(cx, cy);
+        this.ball = new ChocoBananaBall(this.scene);
         this.hudBallName.textContent = "초코 바나나 왁뿌";
         break;
     }
-    
+
     this.hudStatus.textContent = "준비 완료";
     this.hudStatus.className = "status-badge";
+  }
+
+  resizeCanvas() {
+    const rect = this.canvas.getBoundingClientRect();
+    this.camera.aspect = rect.width / rect.height;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(rect.width, rect.height);
   }
 
   initEvents() {
@@ -1589,7 +1702,7 @@ class App {
 
     const updatePointer = (e, active) => {
       if (e.cancelable) e.preventDefault();
-      
+
       if (!this.firstTouchOccurred) {
         audio.resume();
         this.firstTouchOccurred = true;
@@ -1597,10 +1710,9 @@ class App {
       }
 
       this.pointer.active = active;
-      
       const rect = this.canvas.getBoundingClientRect();
+
       let clientX, clientY;
-      
       if (e.touches && e.touches.length > 0) {
         clientX = e.touches[0].clientX;
         clientY = e.touches[0].clientY;
@@ -1608,31 +1720,66 @@ class App {
         clientX = e.clientX;
         clientY = e.clientY;
       }
-      
+
       this.pointer.px = this.pointer.x;
       this.pointer.py = this.pointer.y;
       this.pointer.x = clientX - rect.left;
       this.pointer.y = clientY - rect.top;
+
+      this.pointer.xNDC = ((clientX - rect.left) / rect.width) * 2 - 1;
+      this.pointer.yNDC = -((clientY - rect.top) / rect.height) * 2 + 1;
     };
 
-    this.canvas.addEventListener('mousedown', (e) => updatePointer(e, true), { passive: false });
-    this.canvas.addEventListener('mousemove', (e) => {
-      if (this.pointer.active) updatePointer(e, true);
-    }, { passive: false });
-    
-    const releasePointer = () => {
-      this.pointer.active = false;
-      if (this.ball && this.ball.stage === 2 && this.ball.softBody) {
-        this.ball.softBody.update(this.pointer, this.canvas.width/window.devicePixelRatio, this.canvas.height/window.devicePixelRatio);
+    const handleStart = (e) => {
+      updatePointer(e, true);
+      this.raycaster.setFromCamera(new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC), this.camera);
+      
+      let intersects = [];
+      if (this.ball) {
+        if (this.ball.stage === 2 && this.ball.softBody) {
+          intersects = this.raycaster.intersectObject(this.ball.softBody.mesh);
+        } else if (this.ball.group) {
+          intersects = this.raycaster.intersectObjects(this.ball.group.children, true);
+        }
+      }
+
+      if (intersects.length > 0) {
+        this.isOrbiting = false;
+      } else {
+        this.isOrbiting = true;
       }
     };
-    
-    window.addEventListener('mouseup', releasePointer);
 
-    this.canvas.addEventListener('touchstart', (e) => updatePointer(e, true), { passive: false });
-    this.canvas.addEventListener('touchmove', (e) => updatePointer(e, true), { passive: false });
-    window.addEventListener('touchend', releasePointer);
-    window.addEventListener('touchcancel', releasePointer);
+    const handleMove = (e) => {
+      if (!this.pointer.active) return;
+      
+      const prevNDC = new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC);
+      updatePointer(e, true);
+
+      if (this.isOrbiting) {
+        const dx = this.pointer.xNDC - prevNDC.x;
+        const dy = this.pointer.yNDC - prevNDC.y;
+        
+        this.theta -= dx * 1.5;
+        this.phi -= dy * 1.5;
+        this.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.phi));
+        this.updateCameraPos();
+      }
+    };
+
+    const handleEnd = () => {
+      this.pointer.active = false;
+      this.isOrbiting = false;
+    };
+
+    this.canvas.addEventListener('mousedown', handleStart, { passive: false });
+    this.canvas.addEventListener('mousemove', handleMove, { passive: false });
+    window.addEventListener('mouseup', handleEnd);
+
+    this.canvas.addEventListener('touchstart', handleStart, { passive: false });
+    this.canvas.addEventListener('touchmove', handleMove, { passive: false });
+    window.addEventListener('touchend', handleEnd);
+    window.addEventListener('touchcancel', handleEnd);
 
     this.btnAudio.addEventListener('click', () => {
       const isMuted = audio.toggleMute();
@@ -1670,15 +1817,16 @@ class App {
   }
 
   animate() {
-    const rect = this.canvas.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
-    
-    this.ctx.clearRect(0, 0, w, h);
+    this.raycaster.setFromCamera(new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC), this.camera);
+
+    const target3D = new THREE.Vector3(
+      this.pointer.xNDC * 3.3,
+      this.pointer.yNDC * 2.5,
+      0
+    );
 
     if (this.ball) {
-      this.ball.update(this.pointer, w, h, this.particles);
-      this.ball.draw(this.ctx);
+      this.ball.update(this.pointer, this.raycaster, target3D, this.particles);
       
       if (this.ball.stage === 1) {
         this.hudStatus.textContent = "금이 감";
@@ -1691,10 +1839,9 @@ class App {
 
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
-      p.update(w, h);
-      p.draw(this.ctx);
-      
+      p.update();
       if (p.life <= 0) {
+        p.destroy();
         this.particles.splice(i, 1);
       }
     }
@@ -1702,10 +1849,27 @@ class App {
     this.pointer.px = this.pointer.x;
     this.pointer.py = this.pointer.y;
 
+    this.renderer.render(this.scene, this.camera);
     requestAnimationFrame(() => this.animate());
   }
 }
 
+function interpolateColor(color1, color2, factor) {
+  const r1 = parseInt(color1.substring(1, 3), 16);
+  const g1 = parseInt(color1.substring(3, 5), 16);
+  const b1 = parseInt(color1.substring(5, 7), 16);
+
+  const r2 = parseInt(color2.substring(1, 3), 16);
+  const g2 = parseInt(color2.substring(3, 5), 16);
+  const b2 = parseInt(color2.substring(5, 7), 16);
+
+  const r = Math.round(r1 + (r2 - r1) * factor);
+  const g = Math.round(g1 + (g2 - g1) * factor);
+  const b = Math.round(b1 + (b2 - b1) * factor);
+
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
 window.addEventListener('DOMContentLoaded', () => {
-  new App();
+  new App3D();
 });
