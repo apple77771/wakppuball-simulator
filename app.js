@@ -492,9 +492,9 @@ class SoftBody3D {
     this.springs = [];
     this.toppingsList = [];
 
-    this.kCenter = 0.015; 
-    this.kEdge = 0.28;    
-    this.damping = 0.64;  
+    this.kCenter = 0.005; // 0.015 -> 0.005로 크게 낮춤: 탄성 복원력을 대폭 줄여 클레이 특유의 쫀득하고 느린 형태 복원 유도
+    this.kEdge = 0.08;    // 0.28 -> 0.08로 낮춤: 엣지 강도를 낮춰 고무공 느낌을 빼고 찰지게 늘어나도록 설정
+    this.damping = 0.46;  // 0.64 -> 0.46으로 조율: 속도 감쇠를 높여 출렁이는 고무푸딩 느낌 대신 끈적하게 달라붙어 멎는 질감 구현
     this.gravity = 0.0; 
 
     this.draggedParticleIdx = -1;
@@ -527,13 +527,13 @@ class SoftBody3D {
         opacity: 1.0
       });
     } else if (this.color === '#ffe082') {
-      // 버터 점토: 약간 윤기 나는 크리미한 질감
+      // 버터 점토: 글레이즈드 코팅 내부의 진짜 클레이처럼 윤기를 빼고 매끄러우며 보송하게 가공된 클레이 질감
       this.material = new THREE.MeshPhysicalMaterial({
         color: this.color,
-        roughness: 0.4,
+        roughness: 0.78, // 클레이 특유의 반사 없는 표면
         metalness: 0.0,
-        clearcoat: 0.2,
-        clearcoatRoughness: 0.3,
+        sheen: new THREE.Color(0xffffff),
+        sheenRoughness: 0.45,
         transparent: true,
         opacity: 1.0
       });
@@ -1102,14 +1102,31 @@ class ButterStickBall {
   initMeshes() {
     this.group = new THREE.Group();
 
-    // 단일 백색 왁스 코팅 껍데기 박스 지오메트리
+    // 1. 내부 버터 핵심 점토 (Inner Yellow Butter Clay Core)
+    const butterGeo = new THREE.BoxGeometry(this.w * 0.95, this.h * 0.95, this.d * 0.95);
+    const butterMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffd54f, // 쫀득한 버터 속살의 진한 노란색
+      roughness: 0.82,
+      metalness: 0.0,
+      clearcoat: 0.0
+    });
+    this.butterMesh = new THREE.Mesh(butterGeo, butterMat);
+    this.butterMesh.castShadow = true;
+    this.butterMesh.receiveShadow = true;
+    this.group.add(this.butterMesh);
+
+    // 2. 외부 글레이즈드 도넛 스타일 반투명 왁스 코팅 껍데기 (Outer Glazed Donut Wax Shell)
     const shellGeo = new THREE.BoxGeometry(this.w, this.h, this.d, 10, 5, 5);
     const shellMat = new THREE.MeshPhysicalMaterial({
-      color: 0xf5f5f5, // 깨끗한 버터 겉면 왁스 코팅 느낌의 백색
-      roughness: 0.25,
-      metalness: 0.0,
-      clearcoat: 0.6,
-      clearcoatRoughness: 0.2
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.45, // 반투명하게 밑에 있는 노란 버터가 비치도록 설정
+      transmission: 0.55, // 설탕 시럽 코팅 느낌의 광학 투과율
+      ior: 1.48,
+      thickness: 0.4,
+      roughness: 0.05, // 매우 미끈미끈한 표면
+      clearcoat: 1.0, // 글레이즈드 시럽 특유의 반짝이는 물광 반사광
+      clearcoatRoughness: 0.05
     });
     this.shellMesh = new THREE.Mesh(shellGeo, shellMat);
     this.shellMesh.castShadow = true;
@@ -1303,6 +1320,8 @@ class ButterStickBall {
       this.scene.remove(this.group);
       this.shellMesh.geometry.dispose();
       this.shellMesh.material.dispose();
+      this.butterMesh.geometry.dispose();
+      this.butterMesh.material.dispose();
       this.crackGroup.children.forEach(c => {
         c.geometry.dispose();
         c.material.dispose();
