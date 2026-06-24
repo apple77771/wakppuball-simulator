@@ -966,40 +966,66 @@ function buildVoronoiCells(geometry) {
 // scene에 추가되는 LineSegments + 셀 틈새(gap) 메쉬들
 // ----------------------------------------------------------------------------
 class VoronoiCrackRenderer {
-  constructor(scene, cells, fleshColor, shellColor) {
+  constructor(scene, cells, shellMaterial) {
     this.scene = scene;
     this.cells = cells;
-    this.fleshColor = fleshColor;   // 속살 색상 (ex: '#ffd54f', '#e8ffd8')
-    this.shellColor = shellColor;   // 껍데기 색상
+    this.shellMaterial = shellMaterial.clone();
+    this.shellMaterial.side = THREE.DoubleSide; // 조각의 뒷면도 보여야 하므로 양면 렌더링 설정
 
     // 셀 경계선 (LineSegments) - setParentGroup에서 group에 추가됨
     const edgeMat = new THREE.LineBasicMaterial({
-      color: 0x111111,
+      color: 0x000000,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.8,
       depthWrite: false
     });
     this.edgeLines = new THREE.LineSegments(new THREE.BufferGeometry(), edgeMat);
     this.edgeLines.visible = false;
-    this.edgeLines.renderOrder = 2;
+    this.edgeLines.renderOrder = 3;
 
-    // 속살(flesh) 노출 메쉬들
-    this.fleshMeshes = new Map();
-    const fCol = new THREE.Color(fleshColor);
-    this.fleshMat = new THREE.MeshStandardMaterial({
-      color: fCol,
-      roughness: 0.65,
-      metalness: 0.0,
-      side: THREE.FrontSide,
-      depthWrite: true
-    });
-
+    this.cellMeshes = [];
     this.parentGroup = null;
+
+    // 각 셀별로 실제 3D 꼭짓점 형상에 맞는 완벽히 밀착되는 다각형 메쉬 생성
+    this.cells.forEach((cell, idx) => {
+      const geo = this.createCellGeometry(cell);
+      const mesh = new THREE.Mesh(geo, this.shellMaterial);
+      mesh.position.copy(cell.center);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.renderOrder = 2;
+      this.cellMeshes.push(mesh);
+    });
+  }
+
+  // 셀 다각형 꼭짓점들을 연결해 center를 공유하는 부드러운 다각형 지오메트리 생성 (완벽 밀착형)
+  createCellGeometry(cell) {
+    const geometry = new THREE.BufferGeometry();
+    const vertices = [];
+    const N = cell.vertices.length;
+    const center = cell.center;
+
+    for (let i = 0; i < N; i++) {
+      const v1 = cell.vertices[i].clone().sub(center);
+      const v2 = cell.vertices[(i + 1) % N].clone().sub(center);
+      
+      // 삼각 페이스: 로컬 중심(0,0,0) -> v1 -> v2
+      vertices.push(0, 0, 0);
+      vertices.push(v1.x, v1.y, v1.z);
+      vertices.push(v2.x, v2.y, v2.z);
+    }
+
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.computeVertexNormals();
+    return geometry;
   }
 
   setParentGroup(group) {
     this.parentGroup = group;
-    // edgeLines는 scene이 아닌 parentGroup에 추가해야 group이 이동해도 따라옴
+    // 모든 셀 메쉬들을 부모 그룹에 추가
+    this.cellMeshes.forEach(mesh => {
+      group.add(mesh);
+    });
     group.add(this.edgeLines);
   }
 
@@ -1015,53 +1041,25 @@ class VoronoiCrackRenderer {
     this.cells.forEach(cell => {
       if (!cell.active || cell.vertices.length < 2) return;
       const len = cell.vertices.length;
+      const lift = cell.outwardNormal.clone().multiplyScalar(cell.liftAmount);
       for (let i = 0; i < len; i++) {
-        edgePts.push(cell.vertices[i].clone());
-        edgePts.push(cell.vertices[(i + 1) % len].clone());
+        edgePts.push(cell.vertices[i].clone().add(lift));
+        edgePts.push(cell.vertices[(i + 1) % len].clone().add(lift));
       }
     });
     if (edgePts.length > 0) {
       this.edgeLines.geometry.setFromPoints(edgePts);
     }
 
-    // 2. 속살 조각 생성/업데이트 (PlaneGeometry + lookAt 방식 - 안정적)
+    // 2. 각 셀 메쉬의 위치를 법선 방향으로 liftAmount 만큼 이동
     this.cells.forEach((cell, idx) => {
-      if (!cell.active) return;
-
       // liftAmount 부드럽게 목표값으로
-      const targetLift = Math.min(cell.pressure * 0.22, 0.22);
+      const targetLift = cell.active ? Math.min(cell.pressure * 0.22, 0.22) : 0.0;
       cell.liftAmount += (targetLift - cell.liftAmount) * 0.18;
 
-      if (cell.liftAmount < 0.004) return;
-
-      if (!this.fleshMeshes.has(idx)) {
-        // 셀 크기 추정: 셀 꼭짓점 간 평균 거리
-        let avgEdge = 0;
-        const verts = cell.vertices;
-        for (let i = 0; i < verts.length; i++) {
-          avgEdge += verts[i].distanceTo(verts[(i + 1) % verts.length]);
-        }
-        avgEdge = verts.length > 0 ? avgEdge / verts.length : 0.4;
-        const size = avgEdge * 1.4; // 셀보다 약간 크게
-
-        // PlaneGeometry: 법선 방향 lookAt으로 자동 정렬
-        const planeGeo = new THREE.PlaneGeometry(size, size);
-        const fMesh = new THREE.Mesh(planeGeo, this.fleshMat);
-        fMesh.renderOrder = 1;
-
-        // 법선 방향 바라보기
-        const target = cell.center.clone().add(cell.outwardNormal);
-        fMesh.lookAt(target);
-
-        this.fleshMeshes.set(idx, fMesh);
-        if (this.parentGroup) this.parentGroup.add(fMesh);
-        else this.scene.add(fMesh);
-      }
-
-      // 위치: 셀 중심 + 법선 방향으로 liftAmount만큼 들어올리기
-      const fMesh = this.fleshMeshes.get(idx);
-      if (fMesh) {
-        fMesh.position.copy(cell.center)
+      const mesh = this.cellMeshes[idx];
+      if (mesh) {
+        mesh.position.copy(cell.center)
           .addScaledVector(cell.outwardNormal, cell.liftAmount);
       }
     });
@@ -1069,20 +1067,23 @@ class VoronoiCrackRenderer {
 
   destroy() {
     if (this.parentGroup) {
+      this.cellMeshes.forEach(mesh => {
+        this.parentGroup.remove(mesh);
+        mesh.geometry.dispose();
+      });
       this.parentGroup.remove(this.edgeLines);
     } else {
+      this.cellMeshes.forEach(mesh => {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+      });
       this.scene.remove(this.edgeLines);
     }
     this.edgeLines.geometry.dispose();
     this.edgeLines.material.dispose();
-    this.fleshMeshes.forEach(fMesh => {
-      if (this.parentGroup) this.parentGroup.remove(fMesh);
-      else this.scene.remove(fMesh);
-      fMesh.geometry.dispose();
-    });
-    this.fleshMeshes.clear();
   }
 }
+
 
 
 // ============================================================================
@@ -1114,22 +1115,21 @@ class GreenAppleBall {
   initMeshes() {
     this.group = new THREE.Group();
 
-    const shellGeo = new THREE.SphereGeometry(this.r, 24, 20); // 12, 10 보다 약간 세밀하게 하여 디테일 확보
-    // 오가닉한 왁스 질감을 위해 구 정점에 불규칙한 엠보싱 노이즈 가산
-    const posAttr = shellGeo.attributes.position;
-    const normalAttr = shellGeo.attributes.normal;
-    for (let i = 0; i < posAttr.count; i++) {
-      const x = posAttr.getX(i);
-      const y = posAttr.getY(i);
-      const z = posAttr.getZ(i);
-      const nx = normalAttr.getX(i);
-      const ny = normalAttr.getY(i);
-      const nz = normalAttr.getZ(i);
-      const noise = (Math.sin(x * 3.5) * Math.cos(y * 3.5) * Math.sin(z * 3.5)) * 0.022;
-      posAttr.setXYZ(i, x + nx * noise, y + ny * noise, z + nz * noise);
-    }
-    shellGeo.computeVertexNormals();
+    // 1. 내부 아삭아삭한 사과 속살 (Core Mesh) - 껍데기가 깨지면 노출됨
+    const coreGeo = new THREE.SphereGeometry(this.r * 0.97, 24, 20);
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: 0xd4ffaa, // Juicy light green apple flesh
+      roughness: 0.78,
+      metalness: 0.0,
+      clearcoat: 0.15,
+      clearcoatRoughness: 0.45
+    });
+    this.coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    this.coreMesh.castShadow = true;
+    this.coreMesh.receiveShadow = true;
+    this.group.add(this.coreMesh);
 
+    // 2. 바깥 초록색 왁스 코팅 껍데기 재질
     const shellMat = new THREE.MeshPhysicalMaterial({
       color: 0x76ff03,
       roughness: 0.15,
@@ -1137,16 +1137,29 @@ class GreenAppleBall {
       clearcoat: 1.0,
       clearcoatRoughness: 0.1
     });
-    this.shellMesh = new THREE.Mesh(shellGeo, shellMat);
-    this.shellMesh.castShadow = true;
-    this.group.add(this.shellMesh);
 
-    // 보로노이 셀 그리드 사전 계산 - 저해상도 지오메트리 사용 (O(n²) 성능 방지)
-    const cellGeo = new THREE.SphereGeometry(this.r, 10, 8);
+    // 3. 꿀벌집 모양(Icosahedron)의 자연스러운 오가닉 보로노이 균열 셀 계산 (Jitter 가산)
+    const cellGeo = new THREE.IcosahedronGeometry(this.r, 1);
+    const posAttr = cellGeo.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      const z = posAttr.getZ(i);
+      const vec = new THREE.Vector3(x, y, z);
+      const jitter = 0.15;
+      vec.x += (Math.random() - 0.5) * jitter;
+      vec.y += (Math.random() - 0.5) * jitter;
+      vec.z += (Math.random() - 0.5) * jitter;
+      vec.normalize().multiplyScalar(this.r);
+      posAttr.setXYZ(i, vec.x, vec.y, vec.z);
+    }
+    cellGeo.computeVertexNormals();
+
     this.cells = buildVoronoiCells(cellGeo);
     cellGeo.dispose();
-    // 균열 렌더러: 속살색(연두), 껍데기색(초록)
-    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, '#d4ffaa', '#76ff03');
+
+    // 균열 렌더러: 초록색 껍데기 재질을 직접 인자로 넘겨 셀들을 그 모양 그대로 렌더링
+    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, shellMat);
 
     this.decorations = [];
     for(let i=0; i<8; i++) {
@@ -1171,7 +1184,6 @@ class GreenAppleBall {
     }
 
     this.scene.add(this.group);
-    // 균열 렌더러 부모 그룹 연결
     this.crackRenderer.setParentGroup(this.group);
   }
 
@@ -1193,7 +1205,7 @@ class GreenAppleBall {
       return;
     }
 
-    const intersects = raycaster.intersectObject(this.shellMesh);
+    const intersects = raycaster.intersectObject(this.coreMesh);
 
     if (pointer.active && intersects.length > 0) {
       const hitPt = intersects[0].point;
@@ -1204,7 +1216,7 @@ class GreenAppleBall {
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
       this.pressure += (0.0035 + dragSpeed * 0.0006) * (isFrozen ? 1.55 : 1.0); // 난이도 하향 (기존 0.002 대비 대폭 상승)
       
-      const localHit = this.shellMesh.worldToLocal(hitPt.clone());
+      const localHit = this.coreMesh.worldToLocal(hitPt.clone());
       
       if (!this.hasGeneratedCracks) {
         this.generateCracks(localHit);
@@ -1342,8 +1354,8 @@ class GreenAppleBall {
       this.softBody.destroy();
     } else {
       this.scene.remove(this.group);
-      this.shellMesh.geometry.dispose();
-      this.shellMesh.material.dispose();
+      this.coreMesh.geometry.dispose();
+      this.coreMesh.material.dispose();
       this.decorations.forEach(d => {
         d.geometry.dispose();
         d.material.dispose();
@@ -1378,7 +1390,7 @@ class ButterStickBall {
     this.group = new THREE.Group();
 
     // 1. 내부 버터 핵심 점토 (Inner Yellow Butter Clay Core)
-    const butterGeo = new THREE.BoxGeometry(this.w * 0.95, this.h * 0.95, this.d * 0.95);
+    const butterGeo = new THREE.BoxGeometry(this.w * 0.96, this.h * 0.96, this.d * 0.96);
     const butterMat = new THREE.MeshPhysicalMaterial({
       color: 0xffd54f, // 쫀득한 버터 속살의 진한 노란색
       roughness: 0.82,
@@ -1390,8 +1402,7 @@ class ButterStickBall {
     this.butterMesh.receiveShadow = true;
     this.group.add(this.butterMesh);
 
-    // 2. 외부 글레이즈드 도넛 스타일 반투명 왁스 코팅 껍데기 (Outer Glazed Donut Wax Shell)
-    const shellGeo = new THREE.BoxGeometry(this.w, this.h, this.d, 8, 4, 4); // 적절하게 분할하여 보로노이 셀 형성
+    // 2. 외부 글레이즈드 도넛 스타일 반투명 왁스 코팅 껍데기 재질
     const shellMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       transparent: true,
@@ -1403,17 +1414,29 @@ class ButterStickBall {
       clearcoat: 1.0, // 글레이즈드 시럽 특유의 반짝이는 물광 반사광
       clearcoatRoughness: 0.05
     });
-    this.shellMesh = new THREE.Mesh(shellGeo, shellMat);
-    this.shellMesh.castShadow = true;
-    this.shellMesh.receiveShadow = true;
-    this.group.add(this.shellMesh);
 
-    // 보로노이 셀 - 저해상도 박스 (4x2x2 = 48개 셀, 8x4x4 = 192개에서 대폭 감소)
+    // 3. 보로노이 셀 - 저해상도 박스 꼭짓점들에 무작위 Jitter 가산하여 오가닉 파편 유도
     const cellGeoB = new THREE.BoxGeometry(this.w, this.h, this.d, 4, 2, 2);
+    const posAttr = cellGeoB.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      const z = posAttr.getZ(i);
+      const jitter = 0.08;
+      posAttr.setXYZ(
+        i,
+        x + (Math.random() - 0.5) * jitter,
+        y + (Math.random() - 0.5) * jitter,
+        z + (Math.random() - 0.5) * jitter
+      );
+    }
+    cellGeoB.computeVertexNormals();
+
     this.cells = buildVoronoiCells(cellGeoB);
     cellGeoB.dispose();
-    // 균열 렌더러: 속살색(진한 버터노란색), 껍데기색(흰색)
-    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, '#ffe082', '#ffffff');
+
+    // 균열 렌더러: 반투명 글레이즈드 재질을 활용하여 밀착 껍데기 조각 생성
+    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, shellMat);
 
     this.scene.add(this.group);
     this.crackRenderer.setParentGroup(this.group);
@@ -1437,7 +1460,7 @@ class ButterStickBall {
       return;
     }
 
-    const intersects = raycaster.intersectObject(this.shellMesh);
+    const intersects = raycaster.intersectObject(this.butterMesh);
 
     if (pointer.active && intersects.length > 0) {
       const hitPt = intersects[0].point;
@@ -1449,7 +1472,7 @@ class ButterStickBall {
       this.pressure += (0.0065 + dragSpeed * 0.001) * (isFrozen ? 1.55 : 1.0);
       if (this.pressure > 1.0) this.pressure = 1.0;
 
-      const localHit = this.shellMesh.worldToLocal(hitPt.clone());
+      const localHit = this.butterMesh.worldToLocal(hitPt.clone());
 
       if (!this.hasGeneratedCracks) {
         this.generateCracks(localHit);
@@ -1569,8 +1592,6 @@ class ButterStickBall {
       this.softBody.destroy();
     } else {
       this.scene.remove(this.group);
-      this.shellMesh.geometry.dispose();
-      this.shellMesh.material.dispose();
       this.butterMesh.geometry.dispose();
       this.butterMesh.material.dispose();
     }
@@ -1624,7 +1645,13 @@ class MiniBalloonBall {
   initMeshes() {
     this.group = new THREE.Group();
 
-    const balloonGeo = new THREE.SphereGeometry(this.r, 24, 20);
+    // 1. 내부 보이지 않는 충돌 판정용 구체 (Raycast Collision Mesh)
+    const collGeo = new THREE.SphereGeometry(this.r * 0.98, 16, 16);
+    const collMat = new THREE.MeshBasicMaterial({ visible: false });
+    this.collisionMesh = new THREE.Mesh(collGeo, collMat);
+    this.group.add(this.collisionMesh);
+
+    // 2. 외부 반투명 풍선 고무 껍데기 재질
     this.balloonMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       transparent: true,
@@ -1637,8 +1664,6 @@ class MiniBalloonBall {
       clearcoat: 1.0,
       clearcoatRoughness: 0.05
     });
-    this.balloonMesh = new THREE.Mesh(balloonGeo, this.balloonMat);
-    this.group.add(this.balloonMesh);
 
     this.beads = [];
     const beadGeo = new THREE.SphereGeometry(1.0, 16, 16);
@@ -1657,12 +1682,28 @@ class MiniBalloonBall {
       this.beads.push({ mesh: bMesh, data: bd });
     });
 
-    // 보로노이 셀 - 저해상도 구로 (O(n²) 방지)
-    const cellGeo2 = new THREE.SphereGeometry(this.r, 10, 8);
+    // 3. 보로노이 셀 - 꿀벌집 모양(Icosahedron)에 무작위 Jitter 가산하여 오가닉 균열 셀 생성
+    const cellGeo2 = new THREE.IcosahedronGeometry(this.r, 1);
+    const posAttr = cellGeo2.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      const z = posAttr.getZ(i);
+      const vec = new THREE.Vector3(x, y, z);
+      const jitter = 0.15;
+      vec.x += (Math.random() - 0.5) * jitter;
+      vec.y += (Math.random() - 0.5) * jitter;
+      vec.z += (Math.random() - 0.5) * jitter;
+      vec.normalize().multiplyScalar(this.r);
+      posAttr.setXYZ(i, vec.x, vec.y, vec.z);
+    }
+    cellGeo2.computeVertexNormals();
+
     this.cells = buildVoronoiCells(cellGeo2);
     cellGeo2.dispose();
-    // 균열 렌더러: 속살색(파스텔 민트), 껍데기색(흰색)
-    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, '#b2ebf2', '#ffffff');
+
+    // 균열 렌더러: 풍선 재질을 활용하여 밀착 껍데기 조각 생성
+    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, this.balloonMat);
 
     this.scene.add(this.group);
     this.crackRenderer.setParentGroup(this.group);
@@ -1746,7 +1787,7 @@ class MiniBalloonBall {
       b.mesh.position.copy(b.data.pos);
     }
 
-    const intersects = raycaster.intersectObject(this.balloonMesh);
+    const intersects = raycaster.intersectObject(this.collisionMesh);
 
     if (pointer.active && intersects.length > 0) {
       const hitPt = intersects[0].point;
@@ -1757,7 +1798,7 @@ class MiniBalloonBall {
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
       this.pressure += (0.003 + dragSpeed * 0.0005) * (isFrozen ? 1.5 : 1.0); // 압력 축적률 상향
 
-      const localHit = this.balloonMesh.worldToLocal(hitPt.clone());
+      const localHit = this.collisionMesh.worldToLocal(hitPt.clone());
 
       if (!this.hasGeneratedCracks) {
         this.generateCracks(localHit);
@@ -1966,8 +2007,8 @@ class MiniBalloonBall {
       this.softBody.destroy();
     } else {
       this.scene.remove(this.group);
-      this.balloonMesh.geometry.dispose();
-      this.balloonMat.dispose();
+      this.collisionMesh.geometry.dispose();
+      this.collisionMesh.material.dispose();
       this.beads.forEach(b => {
         b.mesh.geometry.dispose();
         b.mesh.material.dispose();
@@ -2001,22 +2042,21 @@ class ChocoBananaBall {
   initMeshes() {
     this.group = new THREE.Group();
 
-    const chocoGeo = new THREE.SphereGeometry(this.r, 24, 20);
-    // 수제 초콜릿 코팅처럼 자연스러운 굴곡 노이즈 가산
-    const cPos = chocoGeo.attributes.position;
-    const cNormal = chocoGeo.attributes.normal;
-    for (let i = 0; i < cPos.count; i++) {
-      const x = cPos.getX(i);
-      const y = cPos.getY(i);
-      const z = cPos.getZ(i);
-      const nx = cNormal.getX(i);
-      const ny = cNormal.getY(i);
-      const nz = cNormal.getZ(i);
-      const noise = (Math.sin(x * 2.2) * Math.cos(z * 2.2)) * 0.028;
-      cPos.setXYZ(i, x + nx * noise, y + ny * noise, z + nz * noise);
-    }
-    chocoGeo.computeVertexNormals();
+    // 1. 내부 바나나 핵심 점토 (Inner Banana Clay Core)
+    const coreGeo = new THREE.SphereGeometry(this.r * 0.97, 24, 20);
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: 0xffee58, // Bright banana yellow core
+      roughness: 0.75,
+      metalness: 0.0,
+      clearcoat: 0.15,
+      clearcoatRoughness: 0.45
+    });
+    this.coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    this.coreMesh.castShadow = true;
+    this.coreMesh.receiveShadow = true;
+    this.group.add(this.coreMesh);
 
+    // 2. 외부 초코 코팅 껍데기 재질
     const chocoMat = new THREE.MeshPhysicalMaterial({
       color: 0x3e2723,
       roughness: 0.45,
@@ -2024,16 +2064,29 @@ class ChocoBananaBall {
       clearcoat: 0.25,
       clearcoatRoughness: 0.3
     });
-    this.chocoMesh = new THREE.Mesh(chocoGeo, chocoMat);
-    this.chocoMesh.castShadow = true;
-    this.group.add(this.chocoMesh);
 
-    // 보로노이 셀 - 저해상도 구로 (O(n²) 방지)
-    const cellGeo3 = new THREE.SphereGeometry(this.r, 10, 8);
+    // 3. 보로노이 셀 - 꿀벌집 모양(Icosahedron)에 무작위 Jitter 가산하여 오가닉 균열 셀 생성
+    const cellGeo3 = new THREE.IcosahedronGeometry(this.r, 1);
+    const posAttr = cellGeo3.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      const z = posAttr.getZ(i);
+      const vec = new THREE.Vector3(x, y, z);
+      const jitter = 0.15;
+      vec.x += (Math.random() - 0.5) * jitter;
+      vec.y += (Math.random() - 0.5) * jitter;
+      vec.z += (Math.random() - 0.5) * jitter;
+      vec.normalize().multiplyScalar(this.r);
+      posAttr.setXYZ(i, vec.x, vec.y, vec.z);
+    }
+    cellGeo3.computeVertexNormals();
+
     this.cells = buildVoronoiCells(cellGeo3);
     cellGeo3.dispose();
-    // 균열 렌더러: 속살색(진한 바나나 노란색), 껍데기색(초코 갈색)
-    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, '#ffee58', '#3e2723');
+
+    // 균열 렌더러: 초코 재질을 활용하여 밀착 껍데기 조각 생성
+    this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, chocoMat);
 
     this.scene.add(this.group);
     this.crackRenderer.setParentGroup(this.group);
@@ -2056,7 +2109,7 @@ class ChocoBananaBall {
       return;
     }
 
-    const intersects = raycaster.intersectObject(this.chocoMesh);
+    const intersects = raycaster.intersectObject(this.coreMesh);
 
     if (pointer.active && intersects.length > 0) {
       const hitPt = intersects[0].point;
@@ -2067,7 +2120,7 @@ class ChocoBananaBall {
       const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
       this.pressure += (0.003 + speed * 0.0005) * (isFrozen ? 1.5 : 1.0); // 압력 축적률 상향
 
-      const localHit = this.chocoMesh.worldToLocal(hitPt.clone());
+      const localHit = this.coreMesh.worldToLocal(hitPt.clone());
 
       if (!this.hasGeneratedCracks) {
         this.generateCracks(localHit);
@@ -2195,8 +2248,8 @@ class ChocoBananaBall {
       this.softBody.destroy();
     } else {
       this.scene.remove(this.group);
-      this.chocoMesh.geometry.dispose();
-      this.chocoMesh.material.dispose();
+      this.coreMesh.geometry.dispose();
+      this.coreMesh.material.dispose();
     }
   }
 }
