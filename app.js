@@ -121,7 +121,7 @@ class AudioSynth {
     source.playbackRate.setValueAtTime(pitch, now);
 
     const gainNode = this.ctx.createGain();
-    gainNode.gain.setValueAtTime(volume * 2.0, now);
+    gainNode.gain.setValueAtTime(volume * 5.0, now);
 
     source.connect(gainNode);
     if (panner) {
@@ -169,18 +169,28 @@ class AudioSynth {
       } catch (e) {}
     }
 
-    let mappedType = type;
     let baseVol = 1.15;
-    if (type === 'green-apple') mappedType = 'apple';
-    if (type === 'butter-stick') mappedType = 'butter';
-    if (type === 'mini-balloon') mappedType = 'balloon';
-    if (type === 'choco-banana' || type === 'choco') {
-      mappedType = 'choco';
-      baseVol = 2.5; // 초코바나나 부서지는 소리가 잘 들리도록 대폭 볼륨 업
+    let name;
+    const idx = Math.random() < 0.5 ? 1 : 2;
+
+    if (type === 'green-apple') {
+      name = `apple_crack_${idx}`;
+      baseVol = 1.15;
+    } else if (type === 'butter-stick' || type === 'butter') {
+      // 버터 왁스 깨지는 소리 = 반죽(knead) 소리로 대체
+      name = `apple_knead_${idx}`;
+      baseVol = 3.5;
+    } else if (type === 'mini-balloon') {
+      // 크리스피 미니 왁스 소리 = 반죽(knead) 소리로 대체
+      name = `choco_knead_${idx}`;
+      baseVol = 3.0;
+    } else if (type === 'choco-banana' || type === 'choco') {
+      name = `apple_crack_${idx}`; // 초코바나나 → 청사과 사운드
+      baseVol = 2.8;
+    } else {
+      name = `apple_crack_${idx}`;
     }
 
-    const idx = Math.random() < 0.5 ? 1 : 2;
-    const name = `${mappedType}_crack_${idx}`;
     const pitch = (0.95 + Math.random() * 0.1) * pitchMultiplier;
     this.currentCrunch = this.playBuffer(name, position, false, pitch, baseVol);
   }
@@ -192,8 +202,9 @@ class AudioSynth {
     else if (this.activeSkin === 'mini-balloon') type = 'balloon';
     else if (this.activeSkin === 'choco-banana') type = 'choco';
 
-    const name = `${type}_crack_2`;
-    const baseVol = (type === 'choco') ? 2.6 : 1.25; // 초코 팝 소리 볼륨 대폭 강화
+    const soundType = (type === 'choco') ? 'apple' : type; // 초코 → 청사과 사운드
+    const name = `${soundType}_crack_2`;
+    const baseVol = (type === 'butter') ? 3.2 : (type === 'choco') ? 2.8 : 1.25;
     this.playBuffer(name, position, false, 0.9, baseVol);
   }
 
@@ -218,7 +229,7 @@ class AudioSynth {
 
     const idx = Math.random() < 0.5 ? 1 : 2;
     const name = `${type}_knead_${idx}`;
-    const volume = Math.min(1.0, 0.25 + intensity * 0.75);
+    const volume = Math.min(2.0, 0.6 + intensity * 1.4);
     const pitch = 0.88 + Math.random() * 0.24;
     this.currentKnead = this.playBuffer(name, position, false, pitch, volume);
   }
@@ -472,38 +483,45 @@ class Particle3D {
 // ============================================================================
 // 3. 3차원 탄성 질점-스프링 소프트바디 반죽 엔진 (3D Soft-Body Physics)
 // ============================================================================
-class SoftBodyParticle3D {
-  constructor(x, y, z) {
-    this.pos = new THREE.Vector3(x, y, z);
-    this.originalPos = new THREE.Vector3(x, y, z);
-    this.vel = new THREE.Vector3();
-    this.force = new THREE.Vector3();
-  }
-}
-
+// ============================================================================
+// 가우시안 직접 변형 클레이 바디 (Gaussian Vertex Deformation Clay)
+// 스프링 물리 없이 가우시안 함수로 정점을 직접 밀고 당기는 방식.
+// O(n) 계산으로 고해상도 메쉬에서도 성능 문제 없음.
+// ============================================================================
 class SoftBody3D {
   constructor(scene, shapeType, radius, color, shardColor, shardCount, toppings = []) {
     this.scene = scene;
     this.radius = radius;
     this.color = color;
     this.shardColor = shardColor;
-    
-    this.particles = [];
-    this.springs = [];
     this.toppingsList = [];
 
-    this.kCenter = 0.0028; // 전역 앵커 복원 강도를 낮추어 엄청나게 길고 쫀득하게 늘어나게 설정
-    this.kEdge = 0.06;    // 모서리 장력을 낮춤
-    this.damping = 0.44;  // 감쇠(Viscous friction)를 강화하여 고무 진동 완전 억제
-    this.gravity = 0.0; 
+    // 가우시안 파라미터
+    this.sigma = radius * 0.62;       // 터치 영향 반경
+    this.dragStrength = 1.2;          // 드래그 변형 강도
+    this.recoverySpeed = 0.012;       // 탄성 복원 속도 (매우 낮게 = 클레이처럼 잘 안돌아옴)
+    this.velDamping = 0.55;           // 속도 감쇠 (묵직하고 찰진 질감)
+    this.plasticRate = 0.55;          // 소성 변형 축적 속도 (높게 = 늘어난 상태 유지)
+    this.plasticDecay = 0.001;        // 소성 감쇠 극도로 낮게 = 거의 안돌아옴
 
+    // 드래그 상태
+    this.touchAnchor = null;          // 최초 접촉점 (월드 좌표)
+    this.isDragging = false;
+    this.prevTargetPos = null;
+
+    // 정점 배열 (스프링/파티클 대신)
+    this.origPos = [];                // 원래 위치 (변하지 않음)
+    this.plasticOff = [];             // 소성 변형 누적 오프셋
+    this.pos = [];                    // 현재 위치
+    this.vel = [];                    // 속도
+
+    // 외부 호환용 프로퍼티
+    this.particles = [];              // toppings pIndex 호환
     this.draggedParticleIdx = -1;
-
     this.leftDragOffset = new THREE.Vector3();
     this.rightDragOffset = new THREE.Vector3();
     this.leftDragActive = false;
     this.rightDragActive = false;
-
     this.meltShards = false;
     this.baseColor = color;
     this.targetColor = color;
@@ -515,9 +533,9 @@ class SoftBody3D {
 
   init(shapeType, r) {
     if (shapeType === 'box') {
-      this.geometry = new THREE.BoxGeometry(2.2, 0.9, 0.9, 5, 2, 2);
+      this.geometry = new THREE.BoxGeometry(2.2, 0.9, 0.9, 10, 4, 4);
     } else {
-      this.geometry = new THREE.SphereGeometry(r, 12, 10);
+      this.geometry = new THREE.SphereGeometry(r, 36, 28); // 고해상도 - 가우시안은 O(n)이라 OK
     }
     
     if (this.color === '#ffffff' || this.color === '#e2f5d3') {
@@ -582,47 +600,18 @@ class SoftBody3D {
     this.mesh.receiveShadow = true;
     this.scene.add(this.mesh);
 
+    // 정점 배열 초기화 (스프링/파티클 없음)
     const posAttr = this.geometry.attributes.position;
-    for (let i = 0; i < posAttr.count; i++) {
-      const px = posAttr.getX(i);
-      const py = posAttr.getY(i);
-      const pz = posAttr.getZ(i);
-      this.particles.push(new SoftBodyParticle3D(px, py, pz));
-    }
-
-    const index = this.geometry.index;
-    const addSpring = (i1, i2, isCross = false) => {
-      if (this.springs.some(s => (s.i1 === i1 && s.i2 === i2) || (s.i1 === i2 && s.i2 === i1))) return;
-      const p1 = this.particles[i1];
-      const p2 = this.particles[i2];
-      const restLength = p1.originalPos.distanceTo(p2.originalPos);
-      this.springs.push({ i1, i2, restLength, originalRestLength: restLength, isCross });
-    };
-
-    if (index) {
-      for (let i = 0; i < index.count; i += 3) {
-        const a = index.array[i];
-        const b = index.array[i+1];
-        const c = index.array[i+2];
-        addSpring(a, b);
-        addSpring(b, c);
-        addSpring(c, a);
-      }
-    } else {
-      for (let i = 0; i < posAttr.count; i += 3) {
-        addSpring(i, i+1);
-        addSpring(i+1, i+2);
-        addSpring(i+2, i);
-      }
-    }
-
-    for (let i = 0; i < this.particles.length; i++) {
-      for (let j = i + 1; j < this.particles.length; j++) {
-        const dist = this.particles[i].originalPos.distanceTo(this.particles[j].originalPos);
-        if (dist > r * 1.5) {
-          addSpring(i, j, true);
-        }
-      }
+    const n = posAttr.count;
+    for (let i = 0; i < n; i++) {
+      const v = new THREE.Vector3(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+      this.origPos.push(v.clone());
+      this.plasticOff.push(new THREE.Vector3());
+      this.pos.push(v.clone());
+      this.vel.push(new THREE.Vector3());
+      // toppings 호환용 particles 배열
+      const posRef = this.pos[i];
+      this.particles.push({ pos: posRef, originalPos: v.clone() });
     }
   }
 
@@ -671,149 +660,109 @@ class SoftBody3D {
   }
 
   update(pointer, raycaster, targetPos) {
-    const points = this.particles.length;
+    const n = this.pos.length;
+    const posAttr = this.geometry.attributes.position;
+    const sigmaSq = this.sigma * this.sigma;
 
+    // ===== 1. 터치/드래그 감지 =====
     if (pointer.active) {
-      if (this.draggedParticleIdx === -1) {
+      if (!this.isDragging) {
+        // 최초 접촉: 앵커 기록
         const intersects = raycaster.intersectObject(this.mesh);
         if (intersects.length > 0) {
-          const hitPt = intersects[0].point;
-          let nearestDist = Infinity;
-          for (let i = 0; i < points; i++) {
-            const dist = this.particles[i].pos.distanceTo(hitPt);
-            if (dist < nearestDist) {
-              nearestDist = dist;
-              this.draggedParticleIdx = i;
+          this.touchAnchor = intersects[0].point.clone();
+          this.prevTargetPos = targetPos.clone();
+          this.isDragging = true;
+        }
+      }
+
+      if (this.isDragging && this.touchAnchor) {
+        // 드래그 델타 계산
+        const delta = targetPos.clone().sub(this.prevTargetPos);
+        const dragSpeed = delta.length() * 18.0;
+
+        // 반죽 소리 & 햅틱
+        if (dragSpeed > 0.08) {
+          audio.playSquelch(Math.min(dragSpeed * 0.12, 1.0), this.touchAnchor);
+          if (navigator.vibrate && Math.random() < 0.18) navigator.vibrate(6);
+        }
+
+        // ===== 2. 가우시안 변형 적용 =====
+        if (delta.length() > 0.001) {
+          for (let i = 0; i < n; i++) {
+            const restTarget = this.origPos[i].clone().add(this.plasticOff[i]);
+            // 앵커에서 정점 restTarget까지 거리 기반 가우시안 가중치
+            const distSq = restTarget.distanceToSquared(this.touchAnchor);
+            const w = Math.exp(-distSq / (2 * sigmaSq));
+            if (w < 0.002) continue;
+
+            // 정점 이동
+            this.pos[i].addScaledVector(delta, w * this.dragStrength);
+            this.vel[i].addScaledVector(delta, w * this.dragStrength * 0.4);
+
+            // 소성 변형 누적: 늘어난 만큼 restPos 를 조금씩 따라오게 함
+            const strain = this.pos[i].distanceTo(this.origPos[i]) / this.radius;
+            if (strain > 0.04) {
+              const toPlastic = this.pos[i].clone().sub(this.origPos[i]).sub(this.plasticOff[i]);
+              this.plasticOff[i].addScaledVector(toPlastic, this.plasticRate * 0.05);
             }
           }
         }
+
+        // 앵커도 드래그를 따라 조금 이동 (자연스러운 연속 드래그)
+        this.touchAnchor.addScaledVector(delta, 0.4);
+        this.prevTargetPos = targetPos.clone();
       }
 
-      if (this.draggedParticleIdx !== -1) {
-        const target = this.particles[this.draggedParticleIdx];
-        const prevPos = target.pos.clone();
-        target.pos.copy(targetPos);
-        target.vel.set(0, 0, 0);
-
-        const dragSpeed = prevPos.distanceTo(targetPos) * 20.0;
-        if (dragSpeed > 1.8) {
-          audio.playSquelch(dragSpeed * 0.16, target.pos);
-          if (navigator.vibrate && Math.random() < 0.18) {
-            navigator.vibrate(6);
-          }
-
-
-        }
-      }
     } else {
-      if (this.draggedParticleIdx !== -1) {
-        const draggedP = this.particles[this.draggedParticleIdx];
-        const distFromCenter = draggedP.pos.length(); 
-        
-        if (distFromCenter > this.radius * 1.35) {
-          audio.playSlap(Math.min(distFromCenter / (this.radius * 1.8), 1.0), draggedP.pos); 
+      // 손 뗐을 때
+      if (this.isDragging) {
+        // 많이 늘어났으면 slap 소리
+        let maxDist = 0;
+        for (let i = 0; i < n; i++) {
+          const d = this.pos[i].distanceTo(this.origPos[i]);
+          if (d > maxDist) maxDist = d;
+        }
+        if (maxDist > this.radius * 0.25 && this.touchAnchor) {
+          audio.playSlap(Math.min(maxDist / (this.radius * 0.7), 1.0), this.touchAnchor);
           if (navigator.vibrate) navigator.vibrate(15);
         }
-        this.draggedParticleIdx = -1;
       }
+      this.isDragging = false;
+      this.touchAnchor = null;
+      this.prevTargetPos = null;
     }
 
-    this.particles.forEach(p => p.force.set(0, 0, 0));
+    // ===== 3. 탄성 복원 + 소성 감쇠 =====
+    for (let i = 0; i < n; i++) {
+      // 목표 위치 = 원래위치 + 소성오프셋
+      const restTarget = this.origPos[i].clone().add(this.plasticOff[i]);
 
-    let dragOffset = new THREE.Vector3();
-    let dragP = null;
-    if (pointer.active && this.draggedParticleIdx !== -1) {
-      dragP = this.particles[this.draggedParticleIdx];
-      dragOffset.copy(dragP.pos).sub(dragP.originalPos);
+      // 탄성 스프링: 현재위치 → restTarget
+      const toRest = restTarget.clone().sub(this.pos[i]);
+      this.vel[i].addScaledVector(toRest, this.recoverySpeed);
+
+      // 감쇠
+      this.vel[i].multiplyScalar(this.velDamping);
+
+      // 위치 업데이트
+      this.pos[i].add(this.vel[i]);
+
+      // 소성 오프셋 서서히 감소 (시간이 지나면 원래 모양으로 돌아옴)
+      this.plasticOff[i].multiplyScalar(1.0 - this.plasticDecay);
+
+      // particles 배열 동기화 (toppings 호환)
+      this.particles[i].pos.copy(this.pos[i]);
+
+      posAttr.setXYZ(i, this.pos[i].x, this.pos[i].y, this.pos[i].z);
     }
 
-    // 비활성 시 드래그 오프셋 Lerp 탄성 복원
-    if (!this.leftDragActive) {
-      this.leftDragOffset.lerp(new THREE.Vector3(), 0.15);
-    }
-    if (!this.rightDragActive) {
-      this.rightDragOffset.lerp(new THREE.Vector3(), 0.15);
-    }
-
-    this.particles.forEach((p, idx) => {
-      // 드래그 방향으로 중심 복원점(targetCenter)을 당겨 점성 찌그러짐 표현
-      const targetCenter = new THREE.Vector3(0, 0, 0);
-      if (dragP) {
-        const distToDrag = p.originalPos.distanceTo(dragP.originalPos);
-        const weight = Math.exp(-distToDrag * 0.7); // 드래그 부위와 가까운 정점들 위주로 변형
-        targetCenter.addScaledVector(dragOffset, weight * 0.48);
-      }
-
-      // 두 손가락 멀티터치 제스처 인장/압착 오프셋 합산
-      if (p.originalPos.x < 0) {
-        targetCenter.add(this.leftDragOffset);
-      } else {
-        targetCenter.add(this.rightDragOffset);
-      }
-
-      const d = p.pos.clone().sub(targetCenter);
-      const dist = d.length();
-      const rest = p.originalPos.length();
-      if (dist > 0.01) {
-        const diff = dist - rest;
-        const f = d.normalize().multiplyScalar(-diff * this.kCenter);
-        p.force.add(f);
-      }
-    });
-
-    this.springs.forEach(s => {
-      const p1 = this.particles[s.i1];
-      const p2 = this.particles[s.i2];
-      const d = p2.pos.clone().sub(p1.pos);
-      const dist = d.length();
-      if (dist > 0.01) {
-        // 1. 소성 변형 (Plastic Yielding): 쫀득하게 한계 이상 늘어난 부분의 휴지 길이를 변경 (치즈/점토 효과)
-        const diff = dist - s.restLength;
-        const strain = diff / s.restLength;
-        
-        // 당겨질 때 극적인 쫀득함을 구현하기 위해 소성 변형율 45% 적용
-        if (Math.abs(strain) > 0.03) {
-          s.restLength += diff * 0.45;
-        }
-
-        // 2. 극도로 느린 점성 복원 (Very Slow Viscous Recovery)
-        s.restLength += (s.originalRestLength - s.restLength) * 0.018;
-
-        const k = s.isCross ? 0.015 : this.kEdge;
-        const f = d.normalize().multiplyScalar((dist - s.restLength) * k);
-        p1.force.add(f);
-        p2.force.sub(f);
-      }
-    });
-
-    for (let i = 0; i < points; i++) {
-      if (pointer.active && i === this.draggedParticleIdx) continue;
-
-      const p = this.particles[i];
-      p.force.y += this.gravity; 
-      
-      p.vel.add(p.force);
-      p.vel.multiplyScalar(this.damping);
-      p.pos.add(p.vel);
-
-      if (p.pos.y < -3.1) { p.pos.y = -3.1; p.vel.y = 0; }
-      if (p.pos.y > 3.1)  { p.pos.y = 3.1;  p.vel.y = 0; }
-      if (p.pos.x < -4.0) { p.pos.x = -4.0; p.vel.x = 0; }
-      if (p.pos.x > 4.0)  { p.pos.x = 4.0;  p.vel.x = 0; }
-      if (p.pos.z < -2.0) { p.pos.z = -2.0; p.vel.z = 0; }
-      if (p.pos.z > 2.0)  { p.pos.z = 2.0;  p.vel.z = 0; }
-    }
-
-    const posAttr = this.geometry.attributes.position;
-    for (let i = 0; i < points; i++) {
-      posAttr.setXYZ(i, this.particles[i].pos.x, this.particles[i].pos.y, this.particles[i].pos.z);
-    }
     posAttr.needsUpdate = true;
     this.geometry.computeVertexNormals();
 
+    // ===== 4. 토핑 위치 동기화 =====
     this.toppingsList.forEach(t => {
-      const p = this.particles[t.pIndex];
-      t.mesh.position.copy(p.pos).add(t.offsetDir);
+      t.mesh.position.copy(this.pos[t.pIndex]).add(t.offsetDir);
       t.mesh.rotation.set(t.rotOffset.x, t.rotOffset.y, t.rotOffset.z);
     });
   }
@@ -1137,6 +1086,12 @@ class GreenAppleBall {
       clearcoat: 1.0,
       clearcoatRoughness: 0.1
     });
+
+    // 2-1. 껍데기 빈틈 없애는 backdrop 구체 (보로노이 셀 아래 깔리는 단색 배경)
+    const backdropGeo = new THREE.SphereGeometry(this.r * 0.995, 32, 24);
+    this.shellBackdrop = new THREE.Mesh(backdropGeo, shellMat.clone());
+    this.shellBackdrop.renderOrder = 1;
+    this.group.add(this.shellBackdrop);
 
     // 3. 꿀벌집 모양(Icosahedron)의 자연스러운 오가닉 보로노이 균열 셀 계산 (Jitter 가산)
     const cellGeo = new THREE.IcosahedronGeometry(this.r, 1);
@@ -1653,17 +1608,23 @@ class MiniBalloonBall {
 
     // 2. 외부 반투명 풍선 고무 껍데기 재질
     this.balloonMat = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
+      color: 0xe8f4f8,
       transparent: true,
-      opacity: 0.35,
-      roughness: 0.02,
+      opacity: 0.55,
+      roughness: 0.04,
       metalness: 0.0,
-      transmission: 0.98,
+      transmission: 0.6,
       ior: 1.45,
-      thickness: 0.6,
+      thickness: 0.5,
       clearcoat: 1.0,
       clearcoatRoughness: 0.05
     });
+
+    // 2-1. 풍선 구체 메쉬 (셀 아래 깔리는 실제 풍선 껍데기)
+    const balloonGeo = new THREE.SphereGeometry(this.r * 0.995, 32, 24);
+    this.balloonSphereMesh = new THREE.Mesh(balloonGeo, this.balloonMat.clone());
+    this.balloonSphereMesh.renderOrder = 1;
+    this.group.add(this.balloonSphereMesh);
 
     this.beads = [];
     const beadGeo = new THREE.SphereGeometry(1.0, 16, 16);
@@ -2064,6 +2025,12 @@ class ChocoBananaBall {
       clearcoat: 0.25,
       clearcoatRoughness: 0.3
     });
+
+    // 2-1. 껍데기 빈틈 없애는 backdrop 구체 (보로노이 셀 아래 깔리는 단색 초코 배경)
+    const chocoBackdropGeo = new THREE.SphereGeometry(this.r * 0.995, 32, 24);
+    this.shellBackdrop = new THREE.Mesh(chocoBackdropGeo, chocoMat.clone());
+    this.shellBackdrop.renderOrder = 1;
+    this.group.add(this.shellBackdrop);
 
     // 3. 보로노이 셀 - 꿀벌집 모양(Icosahedron)에 무작위 Jitter 가산하여 오가닉 균열 셀 생성
     const cellGeo3 = new THREE.IcosahedronGeometry(this.r, 1);
