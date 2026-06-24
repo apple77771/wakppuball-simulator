@@ -28,7 +28,11 @@ http.createServer((req, res) => {
       res.end('Not found: ' + req.url);
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache'
+    });
     res.end(data);
   });
 }).listen(PORT, () => {

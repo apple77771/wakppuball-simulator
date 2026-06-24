@@ -177,15 +177,13 @@ class AudioSynth {
       name = `apple_crack_${idx}`;
       baseVol = 1.15;
     } else if (type === 'butter-stick' || type === 'butter') {
-      // 버터 왁스 깨지는 소리 = 반죽(knead) 소리로 대체
-      name = `apple_knead_${idx}`;
+      name = `apple_knead_${idx}`; // 버터 → 반죽 소리
       baseVol = 3.5;
     } else if (type === 'mini-balloon') {
-      // 크리스피 미니 왁스 소리 = 반죽(knead) 소리로 대체
-      name = `choco_knead_${idx}`;
+      name = `choco_knead_${idx}`; // 크리스피미니 → 반죽 소리
       baseVol = 3.0;
     } else if (type === 'choco-banana' || type === 'choco') {
-      name = `apple_crack_${idx}`; // 초코바나나 → 청사과 사운드
+      name = `apple_crack_${idx}`; // 초코바나나 → 청사과 왁스 소리
       baseVol = 2.8;
     } else {
       name = `apple_crack_${idx}`;
@@ -923,9 +921,10 @@ class VoronoiCrackRenderer {
 
     // 셀 경계선 (LineSegments) - setParentGroup에서 group에 추가됨
     const edgeMat = new THREE.LineBasicMaterial({
-      color: 0x000000,
+      color: 0x111111,
       transparent: true,
-      opacity: 0.8,
+      opacity: 1.0,
+      linewidth: 2,
       depthWrite: false
     });
     this.edgeLines = new THREE.LineSegments(new THREE.BufferGeometry(), edgeMat);
@@ -938,7 +937,9 @@ class VoronoiCrackRenderer {
     // 각 셀별로 실제 3D 꼭짓점 형상에 맞는 완벽히 밀착되는 다각형 메쉬 생성
     this.cells.forEach((cell, idx) => {
       const geo = this.createCellGeometry(cell);
-      const mesh = new THREE.Mesh(geo, this.shellMaterial);
+      // 각 셀마다 개별 material clone → 색/투명도 독립 제어 가능
+      const mat = this.shellMaterial.clone();
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.position.copy(cell.center);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -955,9 +956,10 @@ class VoronoiCrackRenderer {
     const center = cell.center;
 
     for (let i = 0; i < N; i++) {
-      const v1 = cell.vertices[i].clone().sub(center);
-      const v2 = cell.vertices[(i + 1) % N].clone().sub(center);
-      
+      // 셀을 88%로 축소 → 항상 틈이 있음 (금 모양)
+      const v1 = cell.vertices[i].clone().sub(center).multiplyScalar(0.88);
+      const v2 = cell.vertices[(i + 1) % N].clone().sub(center).multiplyScalar(0.88);
+
       // 삼각 페이스: 로컬 중심(0,0,0) -> v1 -> v2
       vertices.push(0, 0, 0);
       vertices.push(v1.x, v1.y, v1.z);
@@ -1002,15 +1004,26 @@ class VoronoiCrackRenderer {
 
     // 2. 각 셀 메쉬의 위치를 법선 방향으로 liftAmount 만큼 이동
     this.cells.forEach((cell, idx) => {
-      // liftAmount 부드럽게 목표값으로
-      const targetLift = cell.active ? Math.min(cell.pressure * 0.22, 0.22) : 0.0;
-      cell.liftAmount += (targetLift - cell.liftAmount) * 0.18;
+      // liftAmount 부드럽게 목표값으로 (크게 들어올려야 금이 보임)
+      const targetLift = cell.active ? Math.min(cell.pressure * 1.5, 1.5) : 0.0;
+      cell.liftAmount += (targetLift - cell.liftAmount) * 0.15;
 
       const mesh = this.cellMeshes[idx];
       if (mesh) {
         mesh.position.copy(cell.center)
           .addScaledVector(cell.outwardNormal, cell.liftAmount);
+        // DEBUG: 활성 셀 빨간색으로 표시
+        if (cell.active && mesh.material) mesh.material.color.setHex(0xff0000);
       }
+    });
+  }
+
+  burst() {
+    // 폭발 직전: 모든 셀을 순간적으로 최대 들어올림
+    this.cells.forEach(cell => {
+      cell.active = true;
+      cell.pressure = 1.0;
+      cell.liftAmount = 1.5 + Math.random() * 0.5;
     });
   }
 
@@ -1066,7 +1079,7 @@ class GreenAppleBall {
 
     // 1. 내부 아삭아삭한 사과 속살 (Core Mesh) - 껍데기가 깨지면 노출됨
     const coreGeo = new THREE.SphereGeometry(this.r * 0.97, 24, 20);
-    const coreMat = new THREE.MeshStandardMaterial({
+    const coreMat = new THREE.MeshPhysicalMaterial({
       color: 0xd4ffaa, // Juicy light green apple flesh
       roughness: 0.78,
       metalness: 0.0,
@@ -1149,7 +1162,7 @@ class GreenAppleBall {
     const seedCount = Math.min(3, withDist.length);
     for (let s = 0; s < seedCount; s++) {
       const cell = this.cells[withDist[s].idx];
-      cell.pressure = 1.0 - s * 0.25;
+      cell.pressure = 0.12 - s * 0.03;
       cell.active = true;
     }
   }
@@ -1160,7 +1173,14 @@ class GreenAppleBall {
       return;
     }
 
+    // 드래그 여부 상관없이 항상 크랙 애니메이션 업데이트
+    if (this.stage === 1 && this.crackRenderer) this.crackRenderer.update();
+
     const intersects = raycaster.intersectObject(this.coreMesh);
+
+    // DEBUG
+    if (pointer.active && intersects.length === 0) console.log('[DEBUG] pointer active but NO intersect with coreMesh');
+    if (pointer.active && intersects.length > 0) console.log('[DEBUG] HIT coreMesh, stage=', this.stage, 'pressure=', this.pressure.toFixed(3));
 
     if (pointer.active && intersects.length > 0) {
       const hitPt = intersects[0].point;
@@ -1169,14 +1189,16 @@ class GreenAppleBall {
       this.group.position.set(this.deformX, this.deformY, 0);
 
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += (0.0035 + dragSpeed * 0.0006) * (isFrozen ? 1.55 : 1.0); // 난이도 하향 (기존 0.002 대비 대폭 상승)
-      
+      this.pressure += (0.0025 + dragSpeed * 0.0006) * (isFrozen ? 1.55 : 1.0);
+
       const localHit = this.coreMesh.worldToLocal(hitPt.clone());
-      
+
       if (!this.hasGeneratedCracks) {
         this.generateCracks(localHit);
         this.hasGeneratedCracks = true;
         this.stage = 1;
+        // backdrop 즉시 숨김 → 셀 틈새(금)가 바로 보임
+        if (this.shellBackdrop) this.shellBackdrop.visible = false;
       }
 
       // 터치한 위치 근처 셀 압력 축적
@@ -1192,7 +1214,7 @@ class GreenAppleBall {
       }
 
       // 드래그 방향 편향 + 압력 확산 (느리고 자연스럽게)
-      const propagationRate = 0.032;  // 천천히 번지도록 낮춤
+      const propagationRate = 0.04;  // 적당히 번짐
       const nextPressures = this.cells.map(c => c.pressure);
       this.cells.forEach((cell, idx) => {
         if (cell.pressure > 0.15) {
@@ -1213,7 +1235,7 @@ class GreenAppleBall {
       });
       this.cells.forEach((cell, idx) => {
         cell.pressure = nextPressures[idx];
-        if (cell.pressure > 0.35) cell.active = true;  // 더 높은 임계값으로 조각 수 줄임
+        if (cell.pressure > 0.28) cell.active = true;  // 적당한 임계값
       });
 
       // 균열 렌더러 업데이트 (속살 들어올리기)
@@ -1260,7 +1282,7 @@ class GreenAppleBall {
   explode(particles, isFrozen = false) {
     this.stage = 2;
     this.pressure = 1.0;
-    
+    if (this.crackRenderer) this.crackRenderer.burst();
     audio.playPop(isFrozen ? 200 : 170, this.group.position);
     if (navigator.vibrate) navigator.vibrate(isFrozen ? [40, 80, 150] : [30, 60, 120]);
 
@@ -1359,14 +1381,11 @@ class ButterStickBall {
 
     // 2. 외부 글레이즈드 도넛 스타일 반투명 왁스 코팅 껍데기 재질
     const shellMat = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.45, // 반투명하게 밑에 있는 노란 버터가 비치도록 설정
-      transmission: 0.55, // 설탕 시럽 코팅 느낌의 광학 투과율
-      ior: 1.48,
-      thickness: 0.4,
-      roughness: 0.05, // 매우 미끈미끈한 표면
-      clearcoat: 1.0, // 글레이즈드 시럽 특유의 반짝이는 물광 반사광
+      color: 0xf5f0e8,   // 크림빛 흰색 (설탕 시럽 코팅)
+      transparent: false,
+      roughness: 0.12,
+      metalness: 0.0,
+      clearcoat: 1.0,
       clearcoatRoughness: 0.05
     });
 
@@ -1390,7 +1409,13 @@ class ButterStickBall {
     this.cells = buildVoronoiCells(cellGeoB);
     cellGeoB.dispose();
 
-    // 균열 렌더러: 반투명 글레이즈드 재질을 활용하여 밀착 껍데기 조각 생성
+    // shellBackdrop: 셀 틈새를 막아주는 단색 박스 배경
+    const backdropGeoB = new THREE.BoxGeometry(this.w * 0.998, this.h * 0.998, this.d * 0.998);
+    this.shellBackdrop = new THREE.Mesh(backdropGeoB, shellMat.clone());
+    this.shellBackdrop.renderOrder = 1;
+    this.group.add(this.shellBackdrop);
+
+    // 균열 렌더러: 크림빛 재질을 활용하여 밀착 껍데기 조각 생성
     this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, shellMat);
 
     this.scene.add(this.group);
@@ -1404,7 +1429,7 @@ class ButterStickBall {
     const seedCount = Math.min(2, withDist.length);
     for (let s = 0; s < seedCount; s++) {
       const cell = this.cells[withDist[s].idx];
-      cell.pressure = 1.0 - s * 0.3;
+      cell.pressure = 0.12 - s * 0.03;
       cell.active = true;
     }
   }
@@ -1433,6 +1458,7 @@ class ButterStickBall {
         this.generateCracks(localHit);
         this.hasGeneratedCracks = true;
         this.stage = 1;
+        if (this.shellBackdrop) this.shellBackdrop.visible = false;
       }
 
       // 터치한 위치 근처 셀 압력 축적
@@ -1443,7 +1469,8 @@ class ButterStickBall {
         if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx; }
       });
       if (nearestIdx !== -1) {
-        this.cells[nearestIdx].pressure = Math.min(1.0, this.cells[nearestIdx].pressure + (0.22 + dragSpeed * 0.07));
+        // 버터는 셀 압력 낮게 제한 → 조각이 살짝만 벌어짐 (날아가지 않게)
+        this.cells[nearestIdx].pressure = Math.min(0.25, this.cells[nearestIdx].pressure + (0.03 + dragSpeed * 0.008));
         this.cells[nearestIdx].active = true;
       }
 
@@ -1676,7 +1703,7 @@ class MiniBalloonBall {
     const seedCount = Math.min(3, withDist.length);
     for (let s = 0; s < seedCount; s++) {
       const cell = this.cells[withDist[s].idx];
-      cell.pressure = 1.0 - s * 0.25;
+      cell.pressure = 0.12 - s * 0.03;
       cell.active = true;
     }
   }
@@ -1757,7 +1784,7 @@ class MiniBalloonBall {
       this.group.position.set(this.deformX, this.deformY, 0);
 
       const dragSpeed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += (0.003 + dragSpeed * 0.0005) * (isFrozen ? 1.5 : 1.0); // 압력 축적률 상향
+      this.pressure += (0.0025 + dragSpeed * 0.0006) * (isFrozen ? 1.5 : 1.0);
 
       const localHit = this.collisionMesh.worldToLocal(hitPt.clone());
 
@@ -1765,6 +1792,7 @@ class MiniBalloonBall {
         this.generateCracks(localHit);
         this.hasGeneratedCracks = true;
         this.stage = 1;
+        if (this.balloonSphereMesh) this.balloonSphereMesh.visible = false;
       }
 
       // 가장 가까운 셀에 압력 누적
@@ -1906,6 +1934,7 @@ class MiniBalloonBall {
 
   explode(particles, isFrozen = false) {
     this.stage = 2;
+    if (this.crackRenderer) this.crackRenderer.burst();
     const pos = this.group.position.clone();
     audio.playPop(isFrozen ? 220 : 190, pos);
     if (navigator.vibrate) navigator.vibrate(isFrozen ? [40, 50, 120] : [30, 40, 90]);
@@ -2005,7 +2034,7 @@ class ChocoBananaBall {
 
     // 1. 내부 바나나 핵심 점토 (Inner Banana Clay Core)
     const coreGeo = new THREE.SphereGeometry(this.r * 0.97, 24, 20);
-    const coreMat = new THREE.MeshStandardMaterial({
+    const coreMat = new THREE.MeshPhysicalMaterial({
       color: 0xffee58, // Bright banana yellow core
       roughness: 0.75,
       metalness: 0.0,
@@ -2065,7 +2094,7 @@ class ChocoBananaBall {
     const seedCount = Math.min(3, withDist.length);
     for (let s = 0; s < seedCount; s++) {
       const cell = this.cells[withDist[s].idx];
-      cell.pressure = 1.0 - s * 0.25;
+      cell.pressure = 0.12 - s * 0.03;
       cell.active = true;
     }
   }
@@ -2076,6 +2105,9 @@ class ChocoBananaBall {
       return;
     }
 
+    // 드래그 여부 상관없이 항상 크랙 애니메이션 업데이트
+    if (this.stage === 1 && this.crackRenderer) this.crackRenderer.update();
+
     const intersects = raycaster.intersectObject(this.coreMesh);
 
     if (pointer.active && intersects.length > 0) {
@@ -2085,7 +2117,7 @@ class ChocoBananaBall {
       this.group.position.set(this.deformX, this.deformY, 0);
 
       const speed = Math.hypot(pointer.x - pointer.px, pointer.y - pointer.py);
-      this.pressure += (0.003 + speed * 0.0005) * (isFrozen ? 1.5 : 1.0); // 압력 축적률 상향
+      this.pressure += (0.0025 + speed * 0.0006) * (isFrozen ? 1.5 : 1.0);
 
       const localHit = this.coreMesh.worldToLocal(hitPt.clone());
 
@@ -2093,6 +2125,7 @@ class ChocoBananaBall {
         this.generateCracks(localHit);
         this.hasGeneratedCracks = true;
         this.stage = 1;
+        if (this.shellBackdrop) this.shellBackdrop.visible = false;
       }
 
       // 가장 가까운 셀에 압력 누적
@@ -2172,6 +2205,7 @@ class ChocoBananaBall {
 
   explode(particles, isFrozen = false) {
     this.stage = 2;
+    if (this.crackRenderer) this.crackRenderer.burst();
     const pos = this.group.position.clone();
     audio.playPop(isFrozen ? 150 : 125, pos);
     if (navigator.vibrate) navigator.vibrate(isFrozen ? [35, 55, 130] : [25, 35, 100]);
@@ -2597,68 +2631,4 @@ class App3D {
         this.cards.forEach(c => c.classList.remove('active'));
         card.classList.add('active');
         
-        this.activeSkin = card.getAttribute('data-skin');
-        this.spawnBall();
-      });
-    });
-  }
-
-  animate() {
-    this.raycaster.setFromCamera(new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC), this.camera);
-
-    const target3D = new THREE.Vector3(
-      this.pointer.xNDC * 3.3,
-      this.pointer.yNDC * 2.5,
-      0
-    );
-
-    if (this.ball) {
-      this.ball.update(this.pointer, this.raycaster, target3D, this.particles, this.isFrozen);
-      
-      if (this.ball.stage === 1) {
-        this.hudStatus.textContent = "금이 감";
-        this.hudStatus.className = "status-badge cracking";
-      } else if (this.ball.stage === 2) {
-        this.hudStatus.textContent = "반죽하기";
-        this.hudStatus.className = "status-badge scrambled";
-      }
-    }
-
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.update();
-      if (p.life <= 0) {
-        p.destroy();
-        this.particles.splice(i, 1);
-      }
-    }
-
-    this.pointer.px = this.pointer.x;
-    this.pointer.py = this.pointer.y;
-    this.pointer.justPressed = false; // 매 프레임 끝에서 justPressed 플래그 클리어
-
-    this.renderer.render(this.scene, this.camera);
-    requestAnimationFrame(() => this.animate());
-  }
-}
-
-function interpolateColor(color1, color2, factor) {
-  const r1 = parseInt(color1.substring(1, 3), 16);
-  const g1 = parseInt(color1.substring(3, 5), 16);
-  const b1 = parseInt(color1.substring(5, 7), 16);
-
-  const r2 = parseInt(color2.substring(1, 3), 16);
-  const g2 = parseInt(color2.substring(3, 5), 16);
-  const b2 = parseInt(color2.substring(5, 7), 16);
-
-  const r = Math.round(r1 + (r2 - r1) * factor);
-  const g = Math.round(g1 + (g2 - g1) * factor);
-  const b = Math.round(b1 + (b2 - b1) * factor);
-
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
-
-window.addEventListener('DOMContentLoaded', () => {
-  audio.init(); // 오디오 리소스 즉시 프리로드 시작
-  new App3D();
-});
+        this.activeSkin = card.getAttribute('data-skin')
