@@ -121,7 +121,7 @@ class AudioSynth {
     source.playbackRate.setValueAtTime(pitch, now);
 
     const gainNode = this.ctx.createGain();
-    gainNode.gain.setValueAtTime(volume * 5.0, now);
+    gainNode.gain.setValueAtTime(volume * 20.0, now);
 
     source.connect(gainNode);
     if (panner) {
@@ -245,7 +245,7 @@ class AudioSynth {
     osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
 
     const gainNode = this.ctx.createGain();
-    gainNode.gain.setValueAtTime(0.9, now);
+    gainNode.gain.setValueAtTime(1.8, now);
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
 
     osc.connect(gainNode);
@@ -271,7 +271,7 @@ class AudioSynth {
     osc.frequency.exponentialRampToValueAtTime(350, now + 0.025);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.24, now);
+    gain.gain.setValueAtTime(0.55, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
 
     osc.connect(gain);
@@ -444,7 +444,32 @@ class Particle3D {
     );
   }
 
+  // 반죽 모드 진입 시 파편을 천천히 반죽 쪽으로 끌어당김
+  makeDebris() {
+    this.isDebris = true;
+    this.decay = 0.0006;      // 극히 천천히 사라짐
+    this.gravity = -0.008;    // 거의 무중력
+    this.friction = 0.97;
+    this.vx *= 0.25;
+    this.vy *= 0.25;
+    this.vz *= 0.25;
+  }
+
   update() {
+    if (this.isDebris) {
+      // 반죽 중심(0,0,0)으로 서서히 끌림
+      const pos = this.mesh.position;
+      this.vx += (-pos.x) * 0.004;
+      this.vy += (-pos.y * 0.5) * 0.004;
+      this.vz += (-pos.z) * 0.004;
+      // 파편 크기는 유지 (life로 줄어들지 않음)
+      const s = Math.max(0.1, this.life * 1.2);
+      this.mesh.scale.set(s, s, s);
+    } else {
+      const scale = Math.max(0.001, this.life);
+      this.mesh.scale.set(scale, scale, scale);
+    }
+
     this.vy += this.gravity;
     this.vx *= this.friction;
     this.vy *= this.friction;
@@ -459,10 +484,8 @@ class Particle3D {
     this.mesh.rotation.z += this.vRot.z;
 
     this.life -= this.decay;
-    const scale = Math.max(0.001, this.life);
-    this.mesh.scale.set(scale, scale, scale);
 
-    if (this.mesh.position.y < -3.2) {
+    if (!this.isDebris && this.mesh.position.y < -3.2) {
       this.mesh.position.y = -3.2;
       this.vy = -this.vy * this.bounce;
       this.vx *= 0.6;
@@ -787,15 +810,26 @@ class SoftBody3D {
 function buildVoronoiCells(geometry) {
   const posAttr = geometry.attributes.position;
   const normAttr = geometry.attributes.normal;
-  const index = geometry.index;
-  if (!posAttr || !index) return [];
+  if (!posAttr) return [];
 
-  // 1. 동일 위치 정점들을 소수점 3자리 기준으로 그룹화 (UV seam 중복 정점 제거)
+  // 인덱스 배열 통일 처리 (indexed / non-indexed 모두 지원)
+  let idxArray, idxCount;
+  if (geometry.index) {
+    idxArray = geometry.index.array;
+    idxCount = geometry.index.count;
+  } else {
+    // 비인덱스: 연속된 3개가 1삼각형
+    idxArray = new Array(posAttr.count);
+    for (let i = 0; i < posAttr.count; i++) idxArray[i] = i;
+    idxCount = posAttr.count;
+  }
+
+  // 1. 동일 위치 정점들을 소수점 2자리 기준으로 그룹화
   const vertexGroups = {};
   for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i).toFixed(3);
-    const y = posAttr.getY(i).toFixed(3);
-    const z = posAttr.getZ(i).toFixed(3);
+    const x = posAttr.getX(i).toFixed(2);
+    const y = posAttr.getY(i).toFixed(2);
+    const z = posAttr.getZ(i).toFixed(2);
     const key = `${x},${y},${z}`;
     if (!vertexGroups[key]) vertexGroups[key] = [];
     vertexGroups[key].push(i);
@@ -808,8 +842,8 @@ function buildVoronoiCells(geometry) {
 
   // 2. 삼각형 페이스 정보 및 Centroid 계산
   const faces = [];
-  for (let i = 0; i < index.count; i += 3) {
-    const a = index.array[i], b = index.array[i + 1], c = index.array[i + 2];
+  for (let i = 0; i < idxCount; i += 3) {
+    const a = idxArray[i], b = idxArray[i + 1], c = idxArray[i + 2];
     const va = new THREE.Vector3(posAttr.getX(a), posAttr.getY(a), posAttr.getZ(a));
     const vb = new THREE.Vector3(posAttr.getX(b), posAttr.getY(b), posAttr.getZ(b));
     const vc = new THREE.Vector3(posAttr.getX(c), posAttr.getY(c), posAttr.getZ(c));
@@ -909,6 +943,143 @@ function buildVoronoiCells(geometry) {
 }
 
 // ----------------------------------------------------------------------------
+// 유기적 랜덤 보로노이 셀 생성 (파편 크기가 제각각인 자연스러운 균열)
+// Fibonacci 분포 + 랜덤 jitter로 seed 배치 → 고해상도 메쉬에 Voronoi 매핑
+// ----------------------------------------------------------------------------
+function buildOrganicVoronoiCells(radius, numSeeds) {
+  if (!numSeeds) numSeeds = 20;
+
+  // 1. Fibonacci 구면 + 랜덤 흔들기로 불규칙한 seed 배치
+  const seeds = [];
+  const goldenAngle = Math.PI * (3.0 - Math.sqrt(5.0));
+  for (let i = 0; i < numSeeds; i++) {
+    const y = 1.0 - (i / (numSeeds - 1)) * 2.0;
+    const rxy = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = goldenAngle * i;
+    const jx = (Math.random() - 0.5) * 0.55;
+    const jy = (Math.random() - 0.5) * 0.45;
+    const jz = (Math.random() - 0.5) * 0.55;
+    const v = new THREE.Vector3(
+      rxy * Math.cos(theta) + jx,
+      y + jy,
+      rxy * Math.sin(theta) + jz
+    ).normalize().multiplyScalar(radius);
+    seeds.push(v);
+  }
+
+  // 2. 고해상도 기준 메쉬 (detail=3 → 1280 삼각형으로 세밀한 셀 경계)
+  const baseGeo = new THREE.IcosahedronGeometry(radius, 3);
+  const posAttr = baseGeo.attributes.position;
+  const faceCount = posAttr.count / 3;
+
+  // 3. 각 삼각형 페이스 중심을 가장 가까운 seed에 배정
+  const faceSeed = new Int32Array(faceCount);
+  for (let fi = 0; fi < faceCount; fi++) {
+    const i0 = fi * 3;
+    const cx = (posAttr.getX(i0) + posAttr.getX(i0+1) + posAttr.getX(i0+2)) / 3;
+    const cy = (posAttr.getY(i0) + posAttr.getY(i0+1) + posAttr.getY(i0+2)) / 3;
+    const cz = (posAttr.getZ(i0) + posAttr.getZ(i0+1) + posAttr.getZ(i0+2)) / 3;
+    let minD2 = Infinity, minS = 0;
+    for (let si = 0; si < numSeeds; si++) {
+      const s = seeds[si];
+      const dx = cx - s.x, dy = cy - s.y, dz = cz - s.z;
+      const d2 = dx*dx + dy*dy + dz*dz;
+      if (d2 < minD2) { minD2 = d2; minS = si; }
+    }
+    faceSeed[fi] = minS;
+  }
+
+  // 4. 각 seed의 경계 엣지(count=1인 엣지)로 셀 다각형 구성
+  const cells = [];
+  for (let si = 0; si < numSeeds; si++) {
+    const myFaces = [];
+    for (let fi = 0; fi < faceCount; fi++) {
+      if (faceSeed[fi] === si) myFaces.push(fi);
+    }
+    if (myFaces.length < 3) continue;
+
+    const cellCenter = seeds[si].clone();
+    const cellNormal = cellCenter.clone().normalize();
+
+    // 엣지별 사용 횟수 집계 (경계 = 1회 사용)
+    const edgeMap = {};
+    for (const fi of myFaces) {
+      for (let e = 0; e < 3; e++) {
+        const vi1 = fi * 3 + e;
+        const vi2 = fi * 3 + (e + 1) % 3;
+        const x1 = posAttr.getX(vi1), y1 = posAttr.getY(vi1), z1 = posAttr.getZ(vi1);
+        const x2 = posAttr.getX(vi2), y2 = posAttr.getY(vi2), z2 = posAttr.getZ(vi2);
+        const k1 = `${x1.toFixed(3)},${y1.toFixed(3)},${z1.toFixed(3)}`;
+        const k2 = `${x2.toFixed(3)},${y2.toFixed(3)},${z2.toFixed(3)}`;
+        const eKey = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+        if (!edgeMap[eKey]) edgeMap[eKey] = { p1: new THREE.Vector3(x1,y1,z1), p2: new THREE.Vector3(x2,y2,z2), k1, k2, count: 0 };
+        edgeMap[eKey].count++;
+      }
+    }
+
+    // 경계 정점 수집
+    const bVertMap = {};
+    for (const e of Object.values(edgeMap)) {
+      if (e.count === 1) {
+        if (!bVertMap[e.k1]) bVertMap[e.k1] = e.p1.clone();
+        if (!bVertMap[e.k2]) bVertMap[e.k2] = e.p2.clone();
+      }
+    }
+    const bVerts = Object.values(bVertMap);
+    if (bVerts.length < 3) continue;
+
+    // 셀 중심 기준 각도 정렬
+    let tangent = new THREE.Vector3(0, 1, 0).cross(cellNormal);
+    if (tangent.lengthSq() < 0.001) tangent.set(1, 0, 0).cross(cellNormal);
+    tangent.normalize();
+    const binormal = cellNormal.clone().cross(tangent).normalize();
+
+    const sorted = bVerts.map(v => {
+      const d = v.clone().sub(cellCenter);
+      return { v, angle: Math.atan2(d.dot(binormal), d.dot(tangent)) };
+    }).sort((a, b) => a.angle - b.angle).map(x => x.v);
+
+    cells.push({
+      center: cellCenter,
+      outwardNormal: cellNormal,
+      vertices: sorted,
+      neighbors: [],
+      pressure: 0.0,
+      liftAmount: 0.0,
+      active: false
+    });
+  }
+
+  // 5. 이웃 셀 탐색: 평균 최근접 거리의 1.8배 이내
+  if (cells.length > 1) {
+    let totalMinDist = 0;
+    const sampleN = Math.min(8, cells.length);
+    for (let i = 0; i < sampleN; i++) {
+      let minD = Infinity;
+      for (let j = 0; j < cells.length; j++) {
+        if (i !== j) {
+          const d = cells[i].center.distanceTo(cells[j].center);
+          if (d < minD) minD = d;
+        }
+      }
+      totalMinDist += minD;
+    }
+    const neighborThresh = (totalMinDist / sampleN) * 1.85;
+    for (let i = 0; i < cells.length; i++) {
+      for (let j = i + 1; j < cells.length; j++) {
+        if (cells[i].center.distanceTo(cells[j].center) < neighborThresh) {
+          cells[i].neighbors.push(j);
+          cells[j].neighbors.push(i);
+        }
+      }
+    }
+  }
+
+  baseGeo.dispose();
+  return cells;
+}
+
+// ----------------------------------------------------------------------------
 // 보로노이 셀 균열 렌더러: 활성화된 셀을 법선 방향으로 들어올리며 속살 드러내기
 // scene에 추가되는 LineSegments + 셀 틈새(gap) 메쉬들
 // ----------------------------------------------------------------------------
@@ -956,9 +1127,9 @@ class VoronoiCrackRenderer {
     const center = cell.center;
 
     for (let i = 0; i < N; i++) {
-      // 셀을 88%로 축소 → 항상 틈이 있음 (금 모양)
-      const v1 = cell.vertices[i].clone().sub(center).multiplyScalar(0.88);
-      const v2 = cell.vertices[(i + 1) % N].clone().sub(center).multiplyScalar(0.88);
+      // 셀을 93%로 축소 → 틈새(금 모양)가 자연스럽게 보임
+      const v1 = cell.vertices[i].clone().sub(center).multiplyScalar(0.93);
+      const v2 = cell.vertices[(i + 1) % N].clone().sub(center).multiplyScalar(0.93);
 
       // 삼각 페이스: 로컬 중심(0,0,0) -> v1 -> v2
       vertices.push(0, 0, 0);
@@ -1004,16 +1175,14 @@ class VoronoiCrackRenderer {
 
     // 2. 각 셀 메쉬의 위치를 법선 방향으로 liftAmount 만큼 이동
     this.cells.forEach((cell, idx) => {
-      // liftAmount 부드럽게 목표값으로 (크게 들어올려야 금이 보임)
-      const targetLift = cell.active ? Math.min(cell.pressure * 1.5, 1.5) : 0.0;
-      cell.liftAmount += (targetLift - cell.liftAmount) * 0.15;
+      // 크랙 단계: 미세하게 들어올려 틈새(금)만 보임 (폭발은 burst()에서 따로 처리)
+      const targetLift = cell.active ? Math.min(cell.pressure * 0.18, 0.18) : 0.0;
+      cell.liftAmount += (targetLift - cell.liftAmount) * 0.12;
 
       const mesh = this.cellMeshes[idx];
       if (mesh) {
         mesh.position.copy(cell.center)
           .addScaledVector(cell.outwardNormal, cell.liftAmount);
-        // DEBUG: 활성 셀 빨간색으로 표시
-        if (cell.active && mesh.material) mesh.material.color.setHex(0xff0000);
       }
     });
   }
@@ -1106,25 +1275,8 @@ class GreenAppleBall {
     this.shellBackdrop.renderOrder = 1;
     this.group.add(this.shellBackdrop);
 
-    // 3. 꿀벌집 모양(Icosahedron)의 자연스러운 오가닉 보로노이 균열 셀 계산 (Jitter 가산)
-    const cellGeo = new THREE.IcosahedronGeometry(this.r, 1);
-    const posAttr = cellGeo.attributes.position;
-    for (let i = 0; i < posAttr.count; i++) {
-      const x = posAttr.getX(i);
-      const y = posAttr.getY(i);
-      const z = posAttr.getZ(i);
-      const vec = new THREE.Vector3(x, y, z);
-      const jitter = 0.15;
-      vec.x += (Math.random() - 0.5) * jitter;
-      vec.y += (Math.random() - 0.5) * jitter;
-      vec.z += (Math.random() - 0.5) * jitter;
-      vec.normalize().multiplyScalar(this.r);
-      posAttr.setXYZ(i, vec.x, vec.y, vec.z);
-    }
-    cellGeo.computeVertexNormals();
-
-    this.cells = buildVoronoiCells(cellGeo);
-    cellGeo.dispose();
+    // 3. 유기적 랜덤 보로노이 셀 (크기 제각각, 자연스러운 균열)
+    this.cells = buildOrganicVoronoiCells(this.r, 20);
 
     // 균열 렌더러: 초록색 껍데기 재질을 직접 인자로 넘겨 셀들을 그 모양 그대로 렌더링
     this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, shellMat);
@@ -1178,9 +1330,6 @@ class GreenAppleBall {
 
     const intersects = raycaster.intersectObject(this.coreMesh);
 
-    // DEBUG
-    if (pointer.active && intersects.length === 0) console.log('[DEBUG] pointer active but NO intersect with coreMesh');
-    if (pointer.active && intersects.length > 0) console.log('[DEBUG] HIT coreMesh, stage=', this.stage, 'pressure=', this.pressure.toFixed(3));
 
     if (pointer.active && intersects.length > 0) {
       const hitPt = intersects[0].point;
@@ -1209,12 +1358,12 @@ class GreenAppleBall {
         if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx; }
       });
       if (nearestIdx !== -1) {
-        this.cells[nearestIdx].pressure = Math.min(1.0, this.cells[nearestIdx].pressure + (0.18 + dragSpeed * 0.06));
+        this.cells[nearestIdx].pressure = Math.min(1.0, this.cells[nearestIdx].pressure + (0.008 + dragSpeed * 0.003));
         this.cells[nearestIdx].active = true;
       }
 
       // 드래그 방향 편향 + 압력 확산 (느리고 자연스럽게)
-      const propagationRate = 0.04;  // 적당히 번짐
+      const propagationRate = 0.05;  // 적당히 번짐
       const nextPressures = this.cells.map(c => c.pressure);
       this.cells.forEach((cell, idx) => {
         if (cell.pressure > 0.15) {
@@ -1670,25 +1819,8 @@ class MiniBalloonBall {
       this.beads.push({ mesh: bMesh, data: bd });
     });
 
-    // 3. 보로노이 셀 - 꿀벌집 모양(Icosahedron)에 무작위 Jitter 가산하여 오가닉 균열 셀 생성
-    const cellGeo2 = new THREE.IcosahedronGeometry(this.r, 1);
-    const posAttr = cellGeo2.attributes.position;
-    for (let i = 0; i < posAttr.count; i++) {
-      const x = posAttr.getX(i);
-      const y = posAttr.getY(i);
-      const z = posAttr.getZ(i);
-      const vec = new THREE.Vector3(x, y, z);
-      const jitter = 0.15;
-      vec.x += (Math.random() - 0.5) * jitter;
-      vec.y += (Math.random() - 0.5) * jitter;
-      vec.z += (Math.random() - 0.5) * jitter;
-      vec.normalize().multiplyScalar(this.r);
-      posAttr.setXYZ(i, vec.x, vec.y, vec.z);
-    }
-    cellGeo2.computeVertexNormals();
-
-    this.cells = buildVoronoiCells(cellGeo2);
-    cellGeo2.dispose();
+    // 3. 유기적 랜덤 보로노이 셀 (크기 제각각, 자연스러운 균열)
+    this.cells = buildOrganicVoronoiCells(this.r, 18);
 
     // 균열 렌더러: 풍선 재질을 활용하여 밀착 껍데기 조각 생성
     this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, this.balloonMat);
@@ -1803,12 +1935,12 @@ class MiniBalloonBall {
         if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx; }
       });
       if (nearestIdx !== -1) {
-        this.cells[nearestIdx].pressure = Math.min(1.0, this.cells[nearestIdx].pressure + (0.18 + dragSpeed * 0.06));
+        this.cells[nearestIdx].pressure = Math.min(1.0, this.cells[nearestIdx].pressure + (0.008 + dragSpeed * 0.003));
         this.cells[nearestIdx].active = true;
       }
 
       // 압력 확산 (크리스피 미니: 버블처럼 조금 더 빠른 전파)
-      const propagationRate = 0.038;
+      const propagationRate = 0.05;
       const nextPressures = this.cells.map(c => c.pressure);
       this.cells.forEach((cell, idx) => {
         if (cell.pressure > 0.15) {
@@ -2061,25 +2193,8 @@ class ChocoBananaBall {
     this.shellBackdrop.renderOrder = 1;
     this.group.add(this.shellBackdrop);
 
-    // 3. 보로노이 셀 - 꿀벌집 모양(Icosahedron)에 무작위 Jitter 가산하여 오가닉 균열 셀 생성
-    const cellGeo3 = new THREE.IcosahedronGeometry(this.r, 1);
-    const posAttr = cellGeo3.attributes.position;
-    for (let i = 0; i < posAttr.count; i++) {
-      const x = posAttr.getX(i);
-      const y = posAttr.getY(i);
-      const z = posAttr.getZ(i);
-      const vec = new THREE.Vector3(x, y, z);
-      const jitter = 0.15;
-      vec.x += (Math.random() - 0.5) * jitter;
-      vec.y += (Math.random() - 0.5) * jitter;
-      vec.z += (Math.random() - 0.5) * jitter;
-      vec.normalize().multiplyScalar(this.r);
-      posAttr.setXYZ(i, vec.x, vec.y, vec.z);
-    }
-    cellGeo3.computeVertexNormals();
-
-    this.cells = buildVoronoiCells(cellGeo3);
-    cellGeo3.dispose();
+    // 3. 유기적 랜덤 보로노이 셀 (크기 제각각, 자연스러운 균열)
+    this.cells = buildOrganicVoronoiCells(this.r, 20);
 
     // 균열 렌더러: 초코 재질을 활용하여 밀착 껍데기 조각 생성
     this.crackRenderer = new VoronoiCrackRenderer(this.scene, this.cells, chocoMat);
@@ -2136,12 +2251,12 @@ class ChocoBananaBall {
         if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx; }
       });
       if (nearestIdx !== -1) {
-        this.cells[nearestIdx].pressure = Math.min(1.0, this.cells[nearestIdx].pressure + (0.18 + speed * 0.06));
+        this.cells[nearestIdx].pressure = Math.min(1.0, this.cells[nearestIdx].pressure + (0.008 + speed * 0.003));
         this.cells[nearestIdx].active = true;
       }
 
       // 압력 확산 (초코: 초콜릿 코팅처럼 균일하게 전파)
-      const propagationRate = 0.035;
+      const propagationRate = 0.05;
       const nextPressures = this.cells.map(c => c.pressure);
       this.cells.forEach((cell, idx) => {
         if (cell.pressure > 0.15) {
@@ -2361,6 +2476,7 @@ class App3D {
     }
     this.particles.forEach(p => p.destroy());
     this.particles = [];
+    this.debrisConverted = false;
 
     audio.activeSkin = this.activeSkin;
 
@@ -2551,7 +2667,7 @@ class App3D {
 
       if (!this.pointer.active || this.multiTouchActive) return;
       
-      const prevNDC = new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC);
+            const prevNDC = new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC);
       updatePointer(e, true);
 
       if (this.isOrbiting) {
@@ -2631,4 +2747,74 @@ class App3D {
         this.cards.forEach(c => c.classList.remove('active'));
         card.classList.add('active');
         
-        this.activeSkin = card.getAttribute('data-skin')
+        this.activeSkin = card.getAttribute('data-skin');
+        this.spawnBall();
+      });
+    });
+  }
+
+  animate() {
+    this.raycaster.setFromCamera(new THREE.Vector2(this.pointer.xNDC, this.pointer.yNDC), this.camera);
+
+    const target3D = new THREE.Vector3(
+      this.pointer.xNDC * 3.3,
+      this.pointer.yNDC * 2.5,
+      0
+    );
+
+    if (this.ball) {
+      this.ball.update(this.pointer, this.raycaster, target3D, this.particles, this.isFrozen);
+      
+      if (this.ball.stage === 1) {
+        this.hudStatus.textContent = "금이 감";
+        this.hudStatus.className = "status-badge cracking";
+      } else if (this.ball.stage === 2) {
+        this.hudStatus.textContent = "반죽하기";
+        this.hudStatus.className = "status-badge scrambled";
+      }
+    }
+
+    // 반죽 모드 진입 시 파편을 debris로 전환 (한 번만)
+    if (this.ball && this.ball.stage === 2 && !this.debrisConverted) {
+      this.debrisConverted = true;
+      this.particles.forEach(p => p.makeDebris());
+    }
+
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.update();
+      if (p.life <= 0) {
+        p.destroy();
+        this.particles.splice(i, 1);
+      }
+    }
+
+    this.pointer.px = this.pointer.x;
+    this.pointer.py = this.pointer.y;
+    this.pointer.justPressed = false; // 매 프레임 끝에서 justPressed 플래그 클리어
+
+    this.renderer.render(this.scene, this.camera);
+    requestAnimationFrame(() => this.animate());
+  }
+}
+
+function interpolateColor(color1, color2, factor) {
+  const r1 = parseInt(color1.substring(1, 3), 16);
+  const g1 = parseInt(color1.substring(3, 5), 16);
+  const b1 = parseInt(color1.substring(5, 7), 16);
+
+  const r2 = parseInt(color2.substring(1, 3), 16);
+  const g2 = parseInt(color2.substring(3, 5), 16);
+  const b2 = parseInt(color2.substring(5, 7), 16);
+
+  const r = Math.round(r1 + (r2 - r1) * factor);
+  const g = Math.round(g1 + (g2 - g1) * factor);
+  const b = Math.round(b1 + (b2 - b1) * factor);
+
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  audio.init(); // 오디오 리소스 즉시 프리로드 시작
+  new App3D();
+});
