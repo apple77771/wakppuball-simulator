@@ -62,6 +62,17 @@ class AudioSynth {
     }
   }
 
+  unlock() {
+    this.init();
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    const buf = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(this.ctx.destination);
+    src.start(0);
+  }
+
   toggleMute(forceState) {
     this.muted = forceState !== undefined ? forceState : !this.muted;
     if (!this.muted) this.resume();
@@ -2744,9 +2755,10 @@ class App3D {
 
     this.cards.forEach(card => {
       card.addEventListener('click', () => {
+        audio.unlock();
         this.cards.forEach(c => c.classList.remove('active'));
         card.classList.add('active');
-        
+
         this.activeSkin = card.getAttribute('data-skin');
         this.spawnBall();
       });
