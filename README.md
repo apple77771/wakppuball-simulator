@@ -2,6 +2,8 @@
 
 브라우저에서 왁뿌볼을 누르고 문질러 깨뜨리는 모바일 대응 3D ASMR 시뮬레이터입니다.
 
+![WAK-PPU-BALL 실행 화면](docs/screenshot-desktop.png)
+
 ## 바로 실행
 
 [GitHub Pages에서 플레이하기](https://apple77771.github.io/wakppuball-simulator/)
@@ -28,7 +30,7 @@ node server.js
 
 ## 배포
 
-`main` 브랜치에 변경 사항을 올리면 GitHub Actions가 정적 파일을 GitHub Pages에 자동 배포합니다. 최초 1회 저장소의 `Settings > Pages`에서 배포 소스를 `GitHub Actions`로 선택해야 할 수 있습니다.
+GitHub Pages가 `main` 브랜치의 루트 디렉터리를 배포합니다. `main`에 반영된 변경 사항은 별도의 빌드 과정 없이 공개 사이트에 배포됩니다.
 
 ## 기술 구성
 
@@ -36,6 +38,10 @@ node server.js
 - [Three.js r128](https://github.com/mrdoob/three.js/tree/r128)
 - Google Fonts
 
+## 피드백과 기여
+
+버그와 개선 의견은 [GitHub Issues](https://github.com/apple77771/wakppuball-simulator/issues)에 남겨주세요. 재현 환경과 절차를 포함하면 확인이 빨라집니다. 코드 기여 방법은 [CONTRIBUTING.md](CONTRIBUTING.md)를 참고하세요.
+
 ## 권리와 라이선스
 
-소스 코드와 `audio/` 음원·기타 에셋의 공개 재사용 라이선스는 아직 지정되지 않았습니다. 권리 확인 전에는 저장소 외부에서 재배포하거나 상업적으로 사용하지 마세요.
+소스 코드는 [MIT License](LICENSE)로 배포합니다. `audio/`의 효과음은 프로젝트 관리자가 직접 녹음했으며 [CC BY 4.0](audio/LICENSE.md)으로 제공합니다. 외부에서 불러오는 Three.js와 Google Fonts에는 각 프로젝트의 라이선스가 적용됩니다.

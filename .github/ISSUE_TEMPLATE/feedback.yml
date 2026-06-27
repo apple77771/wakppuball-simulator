@@ -1,0 +1,30 @@
+name: 개선 의견
+description: 사용 경험과 개선 아이디어를 남겨주세요.
+title: "[Feedback] "
+labels:
+  - feedback
+body:
+  - type: textarea
+    id: experience
+    attributes:
+      label: 사용 경험
+      description: 좋았던 점과 불편했던 점을 구체적으로 적어주세요.
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 가장 먼저 개선할 부분
+      options:
+        - 터치와 조작감
+        - 물리와 시각 효과
+        - 효과음
+        - 성능과 호환성
+        - 설명과 접근성
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 제안
+      description: 원하는 개선 방향이 있다면 적어주세요.
